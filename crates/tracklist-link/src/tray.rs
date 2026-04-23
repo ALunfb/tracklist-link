@@ -1,14 +1,17 @@
 //! Windows system-tray UI for the companion.
 //!
-//! Minimal scope:
-//!   - Tray icon with tooltip "Tracklist Link"
-//!   - Right-click menu: Copy token, Open config folder, Regenerate token, Quit
-//!   - Left-click: toggles a status window (TODO M1.1)
+//! Right-click menu: Pair dashboard, Copy token, Open config folder,
+//! Regenerate token, Quit.
 //!
-//! Pairing via the `tracklist-link://` URL scheme lives in `pair.rs` and
-//! ships as M1.1 — for now streamers paste the companion token from the
-//! config file into the Tracklist dashboard manually, which is a ~10-second
-//! one-time step.
+//! "Pair dashboard" is the one-click flow — opens the browser at the
+//! Tracklist dashboard with the companion's token + port embedded in the
+//! URL fragment (`#pair=1&token=...&port=...`). Fragments are never sent to
+//! the server, so the token only lives in the streamer's browser. The
+//! dashboard's pairing code picks up the fragment, stores it, and clears
+//! the hash. No copy-paste, no typos.
+//!
+//! Manual Copy-token stays as a fallback for streamers who would rather
+//! paste than trust a browser handoff.
 
 use crate::config::Config;
 use anyhow::{Context, Result};
@@ -29,12 +32,15 @@ use winit::{
 pub fn run(cfg: Arc<Mutex<Config>>) -> Result<()> {
     let menu = Menu::new();
 
+    let pair = MenuItem::new("Pair dashboard", true, None);
     let copy_token = MenuItem::new("Copy token", true, None);
     let open_config = MenuItem::new("Open config folder", true, None);
     let regen = MenuItem::new("Regenerate token", true, None);
     let quit = MenuItem::new("Quit", true, None);
 
     menu.append_items(&[
+        &pair,
+        &PredefinedMenuItem::separator(),
         &copy_token,
         &open_config,
         &PredefinedMenuItem::separator(),
@@ -60,6 +66,7 @@ pub fn run(cfg: Arc<Mutex<Config>>) -> Result<()> {
 
     let mut app = TrayApp {
         cfg,
+        pair_id: pair.id().clone(),
         copy_token_id: copy_token.id().clone(),
         open_config_id: open_config.id().clone(),
         regen_id: regen.id().clone(),
@@ -71,11 +78,19 @@ pub fn run(cfg: Arc<Mutex<Config>>) -> Result<()> {
 
 struct TrayApp {
     cfg: Arc<Mutex<Config>>,
+    pair_id: MenuId,
     copy_token_id: MenuId,
     open_config_id: MenuId,
     regen_id: MenuId,
     quit_id: MenuId,
 }
+
+/// The dashboard URL the "Pair dashboard" tray action opens. Compile-time
+/// constant so the companion can't be tricked into sending a user's token
+/// to an attacker-controlled URL — only this exact origin ever receives it,
+/// and even then only via the URL fragment (which never leaves the
+/// browser's address bar).
+const PAIR_DASHBOARD_URL: &str = "https://music.blackpearl.gg/dashboard";
 
 impl ApplicationHandler for TrayApp {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
@@ -101,7 +116,11 @@ impl ApplicationHandler for TrayApp {
 impl TrayApp {
     fn handle_menu_event(&mut self, event: MenuEvent, event_loop: &ActiveEventLoop) {
         let id = event.id();
-        if id == &self.copy_token_id {
+        if id == &self.pair_id {
+            if let Err(err) = self.pair_dashboard() {
+                tracing::warn!(?err, "pair dashboard failed");
+            }
+        } else if id == &self.copy_token_id {
             if let Err(err) = self.copy_token() {
                 tracing::warn!(?err, "copy token failed");
             }
@@ -117,6 +136,32 @@ impl TrayApp {
             tracing::info!("quit requested from tray menu");
             event_loop.exit();
         }
+    }
+
+    /// Open the dashboard in the default browser with the current token +
+    /// port encoded into the URL fragment. The dashboard's pairing handler
+    /// picks it up, persists to localStorage, and clears the hash.
+    fn pair_dashboard(&self) -> Result<()> {
+        let (token, port) = {
+            let cfg = self.cfg.lock().unwrap();
+            (cfg.token.clone(), cfg.port)
+        };
+        let url = format!(
+            "{}#pair=1&token={}&port={}",
+            PAIR_DASHBOARD_URL,
+            url_fragment_encode(&token),
+            port,
+        );
+        // `cmd /c start` resolves the default browser via the registered
+        // protocol handler and launches the URL. The empty "" is the window
+        // title placeholder `start` requires when the first arg looks like
+        // a quoted string.
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .spawn()
+            .context("spawn cmd /c start")?;
+        tracing::info!("pair dashboard opened");
+        Ok(())
     }
 
     fn copy_token(&self) -> Result<()> {
@@ -161,6 +206,24 @@ impl TrayApp {
         tracing::info!("token regenerated");
         Ok(())
     }
+}
+
+/// Percent-encode the characters that would be interpreted as URL-fragment
+/// delimiters. Tokens are URL-safe base64 so only `+` and `=` could actually
+/// appear, but handling the full unsafe set keeps the encoder robust if the
+/// token format ever changes.
+fn url_fragment_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        let keep = b.is_ascii_alphanumeric()
+            || matches!(b, b'-' | b'_' | b'.' | b'~');
+        if keep {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
 }
 
 /// 32x32 RGBA icon of a single solid color. Good enough for MVP so the tray
