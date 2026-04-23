@@ -37,11 +37,6 @@ tracing-subscriber.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 
-# Tray icon + deep-link pairing land in M1 milestone work. Deps listed in
-# the workspace Cargo.toml but not enabled here yet — adding them bloats
-# the build without any code using them. Uncomment when tray.rs + pair.rs
-# are wired up.
-# [target.'cfg(windows)'.dependencies]
-# tray-icon.workspace = true
-# image.workspace = true
-# winit.workspace = true
+[target.'cfg(windows)'.dependencies]
+tray-icon.workspace = true
+winit.workspace = true

@@ -68,11 +68,9 @@ impl Config {
     }
 
     fn fresh() -> Self {
-        let mut buf = [0u8; TOKEN_BYTES];
-        rand::thread_rng().fill_bytes(&mut buf);
         Self {
             port: DEFAULT_PORT,
-            token: URL_SAFE_NO_PAD.encode(buf),
+            token: fresh_token(),
             allowed_origins: vec![
                 "https://music.blackpearl.gg".into(),
                 // Localhost for the dev loop (Next dev server + tooling).
@@ -82,10 +80,29 @@ impl Config {
             sample_rate: 48_000,
         }
     }
+
+    /// Rotate just the token; preserve every other setting. Called from the
+    /// tray menu's "Regenerate token" action.
+    pub fn rotate_token(mut cfg: Self) -> Result<Self> {
+        cfg.token = fresh_token();
+        Ok(cfg)
+    }
+}
+
+fn fresh_token() -> String {
+    let mut buf = [0u8; TOKEN_BYTES];
+    rand::thread_rng().fill_bytes(&mut buf);
+    URL_SAFE_NO_PAD.encode(buf)
 }
 
 fn config_path() -> Result<PathBuf> {
+    Ok(config_dir()?.join("config.toml"))
+}
+
+/// Absolute path to the user-scoped config dir. Exposed so the tray's
+/// "Open config folder" menu item can hand it to explorer.exe.
+pub fn config_dir() -> Result<PathBuf> {
     let dirs = ProjectDirs::from("gg", "blackpearl", "tracklist-link")
         .context("cannot resolve project directories")?;
-    Ok(dirs.config_dir().join("config.toml"))
+    Ok(dirs.config_dir().to_path_buf())
 }
