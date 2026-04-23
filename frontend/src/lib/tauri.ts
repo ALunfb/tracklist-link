@@ -39,6 +39,8 @@ export const listPresets = () => invoke<PresetEntry[]>("list_presets");
 export const readPreset = (filename: string) =>
   invoke<string>("read_preset", { filename });
 export const openPresetsFolder = () => invoke<void>("open_presets_folder");
+export const savePreset = (filename: string, contents: string) =>
+  invoke<void>("save_preset", { filename, contents });
 
 export interface FftEvent {
   seq: number;

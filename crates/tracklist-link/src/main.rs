@@ -145,6 +145,7 @@ fn main() {
             commands::list_presets,
             commands::read_preset,
             commands::open_presets_folder,
+            commands::save_preset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tracklist Link");

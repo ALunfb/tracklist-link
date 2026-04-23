@@ -220,6 +220,58 @@ pub fn open_presets_folder(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Write a preset to the managed presets folder. Called by the frontend
+/// after it has fetched the bytes from the user's install URL — putting
+/// the actual write behind a Rust command keeps the path-traversal
+/// validation in one place and out of JS.
+#[tauri::command]
+pub fn save_preset(filename: String, contents: String) -> Result<(), String> {
+    if filename.contains('/')
+        || filename.contains('\\')
+        || filename.contains("..")
+        || filename.is_empty()
+        || filename.len() > 255
+    {
+        return Err("invalid filename".to_string());
+    }
+    // Extension allowlist — only recognized preset formats. Refuses an
+    // attacker-crafted "preset.exe" even if the frontend guard is bypassed.
+    let lower = filename.to_lowercase();
+    let ext_ok = lower.ends_with(".json")
+        || lower.ends_with(".milk")
+        || lower.ends_with(".milk2")
+        || lower.ends_with(".milk3");
+    if !ext_ok {
+        return Err("extension must be .json / .milk / .milk2 / .milk3".to_string());
+    }
+    // Size cap — biggest Butterchurn preset JSONs are ~40 KB; cap at 5 MB
+    // so a hostile URL can't blow up the presets folder.
+    if contents.len() > 5 * 1024 * 1024 {
+        return Err("preset exceeds 5 MB limit".to_string());
+    }
+    // If it claims to be JSON, verify it parses. Avoids storing garbage
+    // that will later blow up the visualizer at render time.
+    if lower.ends_with(".json") {
+        serde_json::from_str::<serde_json::Value>(&contents)
+            .map_err(|e| format!("contents are not valid JSON: {e}"))?;
+    }
+    let dir = ensure_presets_dir()?;
+    let path = dir.join(&filename);
+    // Canonicalize dir to guard against symlink escapes. The file may not
+    // yet exist (we're about to create it) so only the DIR is canonicalized.
+    let canon_dir =
+        std::fs::canonicalize(&dir).map_err(|e| format!("canonicalize dir: {e}"))?;
+    if let Some(parent) = path.parent() {
+        let canon_parent = std::fs::canonicalize(parent)
+            .map_err(|e| format!("canonicalize parent: {e}"))?;
+        if !canon_parent.starts_with(&canon_dir) {
+            return Err("path escapes presets dir".to_string());
+        }
+    }
+    std::fs::write(&path, contents).map_err(|e| format!("write preset: {e}"))?;
+    Ok(())
+}
+
 /// Percent-encode everything outside the URL-safe set. Mirrors the
 /// implementation in `tray.rs` so both surfaces produce identical URLs.
 fn url_fragment_encode(s: &str) -> String {
