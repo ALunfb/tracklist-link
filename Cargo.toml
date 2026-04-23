@@ -64,3 +64,16 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Windows-specific (event loop for tray + deep-link handler).
 winit = "0.30"
+
+# Tauri GUI — webview-based desktop app. We keep the headless audio + WS
+# capture path as-is; Tauri just adds a window that the streamer can use
+# to pair, tweak settings, and (later) pick visualizers.
+#
+# `custom-protocol`: serves the bundled frontend via `tauri://` instead of
+# the Vite dev URL. Normally auto-toggled by `cargo tauri build`; we enable
+# it unconditionally because our build flow is plain `cargo build --release`.
+# A future `dev` profile/feature can disable it if we want hot-reload.
+tauri = { version = "2", features = ["tray-icon", "image-png", "custom-protocol", "devtools"] }
+tauri-build = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"

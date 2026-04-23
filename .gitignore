@@ -4,3 +4,11 @@ Cargo.lock
 *.log
 /.vscode
 /.idea
+
+# Tauri codegen — regenerated from plugin ACLs + capability files on every
+# build. Keeping them out of git avoids churn in PRs that don't touch ACLs.
+crates/tracklist-link/gen/
+
+# Frontend artefacts (frontend has its own .gitignore too)
+frontend/node_modules/
+frontend/dist/

@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-feature-settings:
+      "cv02",
+      "cv03",
+      "cv04",
+      "cv11";
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* Thin, audio-app-feeling scrollbars. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0b0d14;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #232838;
+    border-radius: 8px;
+    border: 2px solid #0b0d14;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #2a2f3f;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, rgba(255, 255, 255, 0) 100%),
+      theme(colors.surface.DEFAULT);
+    border: 1px solid theme(colors.surface.border);
+    border-radius: 10px;
+    box-shadow: theme(boxShadow.panel);
+  }
+
+  /* Faint moving gradient behind the header — pure CSS, no GPU hit. */
+  .hero-gradient {
+    background:
+      radial-gradient(
+        1200px 400px at 10% -10%,
+        rgba(168, 85, 247, 0.18),
+        transparent 60%
+      ),
+      radial-gradient(
+        800px 300px at 90% 0%,
+        rgba(56, 189, 248, 0.1),
+        transparent 60%
+      );
+  }
+}

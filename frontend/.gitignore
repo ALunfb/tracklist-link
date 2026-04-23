@@ -1,0 +1,14 @@
+node_modules
+dist
+.vite
+*.log
+.env.local
+# Defensive: never commit emissions if tsc ever runs with emit by mistake
+*.tsbuildinfo
+src/**/*.js
+src/**/*.d.ts
+# Config-file emissions (we author the .ts, never the .js)
+vite.config.js
+vite.config.d.ts
+tailwind.config.js
+tailwind.config.d.ts
