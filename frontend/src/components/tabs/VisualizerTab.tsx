@@ -15,7 +15,7 @@ import {
 import butterchurn from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
 import { useLiveFft } from "../../lib/live-audio";
-import { openPresetsFolder } from "../../lib/tauri";
+import { listPresets, openPresetsFolder, readPreset } from "../../lib/tauri";
 import { cn } from "../../lib/cn";
 
 /**
@@ -41,16 +41,59 @@ export function VisualizerTab() {
   const bandsRef = useRef<number[] | null>(null);
   useLiveFft(bandsRef);
 
-  // Presets ship in the butterchurn-presets npm package. `getPresets()`
+  // Bundled presets from the butterchurn-presets npm package. `getPresets()`
   // returns an object keyed by display name; convert to a stable array.
-  const presetMap = useMemo(() => {
-    const map = butterchurnPresets.getPresets() as Record<string, unknown>;
-    return map;
+  const bundledMap = useMemo(() => {
+    return butterchurnPresets.getPresets() as Record<string, unknown>;
   }, []);
+
+  // User presets — .json files the streamer installed via the gallery
+  // or dropped into the presets folder manually. Loaded asynchronously
+  // on mount + refreshable via the "Refresh folder" button so installs
+  // show up immediately without restarting the app.
+  const [userPresetMap, setUserPresetMap] = useState<Record<string, unknown>>(
+    {},
+  );
+  const [userLoadError, setUserLoadError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const files = await listPresets();
+        const loaded: Record<string, unknown> = {};
+        for (const f of files) {
+          if (f.kind !== "butterchurn") continue; // skip .milk/.milk2/.milk3
+          try {
+            const contents = await readPreset(f.filename);
+            const parsed = JSON.parse(contents);
+            // Display name: filename without extension, prefixed with a
+            // "◯" glyph so user presets visually separate from the
+            // bundled pack in the dropdown.
+            loaded[`◯ ${f.name}`] = parsed;
+          } catch {
+            // Swallow per-preset parse errors — one bad file shouldn't
+            // make the whole list vanish. Log count via state for UI.
+          }
+        }
+        setUserPresetMap(loaded);
+        setUserLoadError(null);
+      } catch (err) {
+        setUserLoadError((err as Error).message);
+      }
+    })();
+  }, [refreshTick]);
+
+  // Merged map keeps user presets first (◯ prefix sorts before most
+  // letters) so installed ones are easy to find at the top.
+  const presetMap = useMemo(() => {
+    return { ...userPresetMap, ...bundledMap };
+  }, [userPresetMap, bundledMap]);
   const presetNames = useMemo(
     () => Object.keys(presetMap).sort((a, b) => a.localeCompare(b)),
     [presetMap],
   );
+  const userPresetCount = Object.keys(userPresetMap).length;
 
   const [presetIndex, setPresetIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
@@ -298,10 +341,35 @@ export function VisualizerTab() {
             MilkDrop 2 studio
           </h1>
           <p className="mt-1 text-xs text-slate-400">
-            {presetNames.length} bundled presets · driven by your live audio
+            {presetNames.length.toLocaleString()} presets
+            {userPresetCount > 0 ? (
+              <>
+                {" · "}
+                <span className="text-accent">
+                  {userPresetCount} installed
+                </span>
+                {" (◯)"}
+              </>
+            ) : null}
+            {" · driven by your live audio"}
           </p>
+          {userLoadError ? (
+            <p className="mt-1 text-[11px] text-rose-400">
+              Couldn&apos;t load user presets: {userLoadError}
+            </p>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setRefreshTick((t) => t + 1)}
+            className="inline-flex items-center gap-2 rounded-md border border-surface-border bg-surface px-3 py-1.5 text-xs text-slate-300 hover:bg-surface-hover hover:text-white"
+            title="Re-scan presets folder"
+          >
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="currentColor">
+              <path d="M8 3V1L4 4l4 3V5c2.21 0 4 1.79 4 4 0 .56-.11 1.1-.32 1.59l1.46 1.46C13.7 11.14 14 10.1 14 9c0-3.31-2.69-6-6-6zm0 10c-2.21 0-4-1.79-4-4 0-.56.11-1.1.32-1.59L2.86 5.95C2.3 6.86 2 7.9 2 9c0 3.31 2.69 6 6 6v2l4-3-4-3v2z" />
+            </svg>
+            Rescan
+          </button>
           <button
             onClick={() => setShowShortcuts(true)}
             className="inline-flex items-center gap-2 rounded-md border border-surface-border bg-surface px-3 py-1.5 text-xs text-slate-300 hover:bg-surface-hover hover:text-white"
