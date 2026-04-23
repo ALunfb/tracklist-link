@@ -5,9 +5,24 @@ default system audio output on the streamer's machine, computes real-time FFT
 spectra + amplitude levels, and serves them over a localhost WebSocket to
 audio-reactive overlays, visualizers, and future Tracklist integrations.
 
-**Status:** pre-MVP. Protocol + audio pipeline + WS server scaffolded. See
-[`ROADMAP.md`](./ROADMAP.md) for milestones and [`SECURITY.md`](./SECURITY.md)
+**Status:** M1 shipped. Windows audio capture, 64-band FFT, RMS/peak levels,
+token + origin auth, tray UI. See [`ROADMAP.md`](./ROADMAP.md) for later
+milestones (MilkDrop, beat detection, CS2 GSI) and [`SECURITY.md`](./SECURITY.md)
 for the threat model.
+
+## Install (Windows)
+
+1. Grab the latest `tracklist-link.exe` from [Releases](https://github.com/ALunfb/tracklist-link/releases).
+2. Double-click to run. A tray icon appears in your notification area.
+3. Right-click tray → **Copy token**.
+4. Open your Tracklist dashboard → "Reactive analyzer" section → paste
+   the token → **Save &amp; test**. The peak meter should light up as
+   soon as audio plays on your PC.
+
+The companion writes its config to
+`%APPDATA%\blackpearl\tracklist-link\config\config.toml` on first run and
+generates a per-install 32-byte secret. Keep the file private; the tray
+menu exposes a **Regenerate token** option if it ever leaks.
 
 ## Why
 
@@ -65,18 +80,34 @@ needs.
 - **OBS scene automation** — silence-triggered scene changes, beat-triggered
   transitions.
 
-## Quick start (dev)
+## Build from source
 
 ```bash
-# Requires: Rust 1.75+, Windows 10/11.
+# Requires: Rust 1.75+, Windows 10/11 for the tray + WASAPI path.
 cargo build --release
 ./target/release/tracklist-link.exe
 ```
 
-On first run the app writes its config to `%APPDATA%/tracklist-link/`,
-generates a random per-install auth token, and starts listening on
-`ws://127.0.0.1:38475/` (port is configurable; default chosen to minimize
-collision risk).
+### Smoke test a running companion
+
+```bash
+cargo run --release --example smoke
+```
+
+Reads the config, connects with a valid Origin header + token, subscribes to
+`audio/fft/64` + `audio/level`, prints the first few frames, then exits. Use
+it any time you change the audio pipeline or protocol to confirm the whole
+stack still round-trips. Prereq: the `tracklist-link` binary must already be
+running in another process.
+
+## Verified hardware / environments
+
+The MVP has been smoke-tested on:
+
+- Windows 11 · default `Speakers (High Definition Audio Device)` output
+- 48 kHz sample rate, f32 samples
+
+Reports welcome for other sample-rate / device combos.
 
 ## Protocol
 
