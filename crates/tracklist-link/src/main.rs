@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Emitter, Manager,
 };
 use tracing::info;
 
@@ -83,6 +83,40 @@ fn main() {
             // Share the Config cell with every IPC command.
             app.manage(commands::AppState { cfg });
 
+            // Bridge: audio broadcast bus → Tauri events. Lets the React
+            // frontend consume FFT + level frames without authing against
+            // its own WS server (the WS is for external overlays).
+            let app_handle = app.handle().clone();
+            let mut ui_rx = bus_tx.subscribe();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    match ui_rx.recv().await {
+                        Ok(audio::AudioFrame::Fft64 { bands, seq, t_ms }) => {
+                            let payload = serde_json::json!({
+                                "seq": seq,
+                                "t_ms": t_ms,
+                                "bands": bands,
+                            });
+                            let _ = app_handle.emit("audio-fft-64", payload);
+                        }
+                        Ok(audio::AudioFrame::Level { rms, peak, seq, t_ms }) => {
+                            let payload = serde_json::json!({
+                                "seq": seq,
+                                "t_ms": t_ms,
+                                "rms": rms,
+                                "peak": peak,
+                            });
+                            let _ = app_handle.emit("audio-level", payload);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // UI fell behind — drop frames, keep going.
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+
             // System tray — pair/copy/quit mirroring the pre-Tauri layout.
             setup_tray(app.handle())?;
 
@@ -108,6 +142,9 @@ fn main() {
             commands::open_pair_url,
             commands::copy_token_to_clipboard,
             commands::open_config_folder,
+            commands::list_presets,
+            commands::read_preset,
+            commands::open_presets_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tracklist Link");

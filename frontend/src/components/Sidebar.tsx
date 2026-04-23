@@ -20,8 +20,8 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { id: "status", label: "Status", icon: Activity },
-  { id: "visualizer", label: "Visualizer", icon: Sparkles, badge: "soon" },
-  { id: "presets", label: "Presets", icon: LayoutGrid, badge: "soon" },
+  { id: "visualizer", label: "Visualizer", icon: Sparkles },
+  { id: "presets", label: "Presets", icon: LayoutGrid },
   { id: "settings", label: "Settings", icon: Settings },
   { id: "about", label: "About", icon: Info },
 ];
