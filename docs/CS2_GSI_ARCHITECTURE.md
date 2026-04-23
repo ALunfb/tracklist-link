@@ -90,6 +90,55 @@ no inventory or process enumeration library. Per
 
 ---
 
+## Real-world validation — SteelSeries Engine
+
+Users commonly already have a SteelSeries GSI config sitting in the same
+cfg folder, which confirms two things about our design:
+
+1. **Multi-vendor coexistence.** CS2 loads *every* `gamestate_integration_*.cfg`
+   it finds and POSTs to each URI independently. Adding ours alongside
+   SteelSeries's (or any other integration) does not interfere with them
+   and they do not interfere with us.
+2. **Our format matches the standard.** SteelSeries's file is structurally
+   identical to what we propose below.
+
+Reference (SteelSeries Engine ships this pattern in production):
+
+```
+"SteelSeries Engine v 1.0"
+{
+    "uri"       "http://127.0.0.1:62111/csgo_game_event"
+    "timeout"   "5.0"
+    "buffer"    "0.1"
+    "throttle"  "0.1"
+    "heartbeat" "0.1"
+    "auth"
+    {
+        "key1" "rx54AtFVYw2bXmCCWJu6"
+        "key2" "6HMGuv2F8m5grBFy292d"
+    }
+    "data"
+    {
+        "provider"            "1"
+        "map"                 "1"
+        "round"               "1"
+        "player_id"           "1"
+        "player_state"        "1"
+        "player_weapons"      "1"
+        "player_match_stats"  "1"
+    }
+}
+```
+
+Two intentional deltas between theirs and our proposal:
+
+- **Heartbeat.** They use `"0.1"` (100 ms) for LED liveness polling; we use
+  `"5.0"` (5 s) since we only care about game-state deltas, not a liveness
+  pulse. Lower traffic, zero UX cost.
+- **Auth shape.** They use `key1` + `key2` (two keys CS2 echoes in the POST
+  body). We use a single `token`. CS2 accepts either; one key is simpler
+  to validate and we have no need for role-separated keys.
+
 ## Config file content
 
 Written to (or instructed for manual placement at):
@@ -105,7 +154,7 @@ Canonical content:
     "timeout"   "5.0"
     "buffer"    "0.1"
     "throttle"  "0.1"
-    "heartbeat" "30.0"
+    "heartbeat" "5.0"
     "auth"
     {
         "token" "<per-install-auth-token>"
