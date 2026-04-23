@@ -1,0 +1,66 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/ALunfb/tracklist-link"
+authors = ["Tracklist"]
+
+[workspace.dependencies]
+# Async runtime.
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "net",
+    "time",
+    "signal",
+    "io-util",
+] }
+
+# Audio — WASAPI loopback on Windows.
+cpal = "0.15"
+
+# FFT — realfft is a thin wrapper over rustfft with a real-input path that
+# halves the work.
+realfft = "3.3"
+rustfft = "6.2"
+
+# WebSocket. Needs `handshake` for accept_hdr_async. Re-exports the `http`
+# crate types used by the handshake callback for building error responses.
+tokio-tungstenite = { version = "0.23", features = ["handshake"] }
+
+# Serde for protocol messages.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Stream combinators for the WS handler. Need StreamExt + SinkExt which
+# live in the default feature set.
+futures-util = "0.3"
+
+# Tokens + hashing.
+rand = "0.8"
+base64 = "0.22"
+subtle = "2.5"  # constant-time comparison
+
+# Config / dirs.
+directories = "5"
+toml = "0.8"
+
+# Logging.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling.
+anyhow = "1"
+thiserror = "1"
+
+# Tray icon.
+tray-icon = "0.19"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Windows-specific (event loop for tray + deep-link handler).
+winit = "0.30"

@@ -1,0 +1,47 @@
+[package]
+name = "tracklist-link"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tracklist Link — a local audio-capture companion for Tracklist. Runs on the streamer's machine, never touches the network beyond 127.0.0.1."
+
+[[bin]]
+name = "tracklist-link"
+path = "src/main.rs"
+
+[dependencies]
+tracklist-link-proto = { path = "../tracklist-link-proto" }
+
+tokio.workspace = true
+cpal.workspace = true
+realfft.workspace = true
+rustfft.workspace = true
+
+tokio-tungstenite.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+futures-util.workspace = true
+
+rand.workspace = true
+base64.workspace = true
+subtle.workspace = true
+
+directories.workspace = true
+toml.workspace = true
+
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Tray icon + deep-link pairing land in M1 milestone work. Deps listed in
+# the workspace Cargo.toml but not enabled here yet — adding them bloats
+# the build without any code using them. Uncomment when tray.rs + pair.rs
+# are wired up.
+# [target.'cfg(windows)'.dependencies]
+# tray-icon.workspace = true
+# image.workspace = true
+# winit.workspace = true
