@@ -5,7 +5,6 @@
 //! the FFT thread windows them, transforms, log-bins, and pushes the
 //! results into a broadcast channel that the WS server fans out.
 
-pub mod beat;
 pub mod capture;
 pub mod fft;
 pub mod silence;
@@ -20,7 +19,6 @@ use tracklist_link_proto::{VizPreset, VizSettings};
 pub enum AudioFrame {
     Fft64 { seq: u64, t_ms: u64, bands: Vec<f32> },
     Level { seq: u64, t_ms: u64, rms: f32, peak: f32 },
-    Beat { seq: u64, t_ms: u64, confidence: f32 },
     /// Silence entered / exited (audio/silence topic). `silent` indicates
     /// the NEW state: true = just went quiet, false = just came back.
     Silence { seq: u64, t_ms: u64, silent: bool },

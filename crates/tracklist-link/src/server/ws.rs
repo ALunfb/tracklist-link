@@ -23,7 +23,7 @@ use tokio_tungstenite::tungstenite::http;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, warn};
 use tracklist_link_proto::{
-    BeatEvent, ClientMessage, FftFrame, Heartbeat, LevelFrame, ServerMessage, SilenceEvent,
+    ClientMessage, FftFrame, Heartbeat, LevelFrame, ServerMessage, SilenceEvent,
     Topic, VizPreset, VizSettings, PROTOCOL_VERSION,
 };
 
@@ -157,10 +157,6 @@ pub async fn handle(
                     }
                     Ok(AudioFrame::Level { seq, t_ms, rms, peak }) if subs.contains(&Topic::AudioLevel) => {
                         let msg = ServerMessage::Level(LevelFrame { seq, t_ms, rms, peak });
-                        tx.send(Message::Text(serde_json::to_string(&msg)?)).await?;
-                    }
-                    Ok(AudioFrame::Beat { seq, t_ms, confidence }) if subs.contains(&Topic::AudioBeat) => {
-                        let msg = ServerMessage::Beat(BeatEvent { seq, t_ms, confidence });
                         tx.send(Message::Text(serde_json::to_string(&msg)?)).await?;
                     }
                     Ok(AudioFrame::Silence { seq, t_ms, silent }) if subs.contains(&Topic::AudioSilence) => {

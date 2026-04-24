@@ -1,18 +1,24 @@
 //! FFT + log-band aggregation.
 //!
 //! Given a window of PCM samples, apply a Hann window, run a real FFT,
-//! fold magnitudes into log-spaced frequency bins (20 Hz → 20 kHz across
+//! fold magnitudes into log-spaced frequency bins (30 Hz → 16 kHz across
 //! 64 output bands), and normalize to a stable 0..1 range that clients
 //! can drive into visualizers.
 //!
 //! Also emits a simple RMS + peak amplitude for the `audio/level` topic.
+//!
+//! Range choice: most music doesn't carry meaningful energy below 30 Hz
+//! (sub-bass rumble / DC drift) or above 16 kHz (cymbal sizzle that most
+//! speakers + consumer-grade mastering roll off). Tightening the band
+//! range keeps the 64 available bands concentrated where audible content
+//! actually lives, instead of wasting a quarter of them on silence.
 
 use realfft::{RealFftPlanner, RealToComplex};
 use std::sync::Arc;
 
 const OUTPUT_BANDS: usize = 64;
-const FREQ_MIN: f32 = 20.0;
-const FREQ_MAX: f32 = 20_000.0;
+const FREQ_MIN: f32 = 30.0;
+const FREQ_MAX: f32 = 16_000.0;
 
 pub struct Processor {
     size: usize,

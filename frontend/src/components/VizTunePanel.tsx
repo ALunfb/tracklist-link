@@ -7,11 +7,6 @@ import {
 interface Props {
   settings: VizSettings;
   onChange: (next: VizSettings) => void;
-  /** Server-side beat sensitivity (companion config). Separate from
-   *  VizSettings because it persists via IPC → config.toml, not
-   *  localStorage. Null when the companion hasn't replied yet. */
-  beatSensitivity: number | null;
-  onBeatSensitivityChange: (v: number) => void;
   onClose: () => void;
 }
 
@@ -20,13 +15,7 @@ interface Props {
  * so the streamer can dial in the feel with the canvas visible in the
  * same glance. Reset button snaps everything back to DEFAULT_VIZ_SETTINGS.
  */
-export function VizTunePanel({
-  settings,
-  onChange,
-  beatSensitivity,
-  onBeatSensitivityChange,
-  onClose,
-}: Props) {
+export function VizTunePanel({ settings, onChange, onClose }: Props) {
   const set = (key: keyof VizSettings, value: number) =>
     onChange({ ...settings, [key]: value });
 
@@ -71,62 +60,15 @@ export function VizTunePanel({
             format={(v) => `${v.toFixed(1)}×`}
           />
           <Slider
-            label="Attack"
-            hint="How fast bars rise to new peaks. Higher = snappier."
-            value={settings.attack}
-            onChange={(v) => set("attack", v)}
-            min={0.05}
-            max={1}
-            step={0.01}
-            format={(v) => v.toFixed(2)}
-          />
-          <Slider
-            label="Release"
-            hint="How fast bars fall back. Higher = shorter trails."
-            value={settings.release}
-            onChange={(v) => set("release", v)}
-            min={0.02}
-            max={1}
-            step={0.01}
-            format={(v) => v.toFixed(2)}
-          />
-          <Slider
-            label="Spectrum tilt"
-            hint="Negative = boost bass. Positive = boost treble."
-            value={settings.spectrumTilt}
-            onChange={(v) => set("spectrumTilt", v)}
-            min={-1}
-            max={1}
-            step={0.05}
-            format={(v) =>
-              v === 0 ? "flat" : v > 0 ? `+${v.toFixed(2)} treble` : `${v.toFixed(2)} bass`
-            }
-          />
-          <Slider
-            label="Noise gate"
-            hint="Zero bands below this magnitude. Kills fan noise / crowd hum."
-            value={settings.noiseGate}
-            onChange={(v) => set("noiseGate", v)}
+            label="Bass boost"
+            hint="Multiplies the bottom third of the spectrum. 0 = flat. Great for bringing kicks forward on presets that react to overall energy."
+            value={settings.bassBoost}
+            onChange={(v) => set("bassBoost", v)}
             min={0}
-            max={0.3}
-            step={0.005}
-            format={(v) => (v === 0 ? "off" : v.toFixed(3))}
-          />
-        </Section>
-
-        <Section label="Beat detection">
-          <Slider
-            label="Sensitivity"
-            hint="Lower fires more beats — crank this if your music is quiet under voice chat. Higher = fewer, stronger beats."
-            value={beatSensitivity ?? 1.6}
-            onChange={onBeatSensitivityChange}
-            min={0.5}
-            max={3.0}
+            max={1}
             step={0.05}
             format={(v) =>
-              v <= 0.8 ? `${v.toFixed(2)} (hot)`
-                : v >= 2.4 ? `${v.toFixed(2)} (strict)`
-                : v.toFixed(2)
+              v === 0 ? "flat" : `+${Math.round(v * 100)}%`
             }
           />
         </Section>
@@ -175,7 +117,7 @@ function Section({
 }) {
   return (
     <div>
-      <div className="mb-2 text-[11px] uppercase tracking-widest text-slate-500">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
         {label}
       </div>
       <div className="space-y-3">{children}</div>
@@ -194,7 +136,7 @@ function Slider({
   format,
 }: {
   label: string;
-  hint?: string;
+  hint: string;
   value: number;
   onChange: (v: number) => void;
   min: number;
@@ -204,9 +146,9 @@ function Slider({
 }) {
   return (
     <div>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs font-medium text-slate-200">{label}</span>
-        <span className="font-mono text-[11px] tabular-nums text-accent">
+      <div className="mb-0.5 flex items-baseline justify-between gap-2">
+        <label className="text-xs font-medium text-slate-200">{label}</label>
+        <span className="font-mono text-[11px] tabular-nums text-slate-400">
           {format(value)}
         </span>
       </div>
@@ -217,13 +159,9 @@ function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="mt-1 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-surface-muted accent-accent"
+        className="w-full accent-brand-500"
       />
-      {hint ? (
-        <div className="mt-1 text-[10px] leading-tight text-slate-500">
-          {hint}
-        </div>
-      ) : null}
+      <p className="mt-0.5 text-[10px] text-slate-500 leading-snug">{hint}</p>
     </div>
   );
 }
