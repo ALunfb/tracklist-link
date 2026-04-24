@@ -140,6 +140,14 @@ fn main() {
                             });
                             let _ = app_handle.emit("audio-beat", payload);
                         }
+                        Ok(audio::AudioFrame::Silence { seq, t_ms, silent }) => {
+                            let payload = serde_json::json!({
+                                "seq": seq,
+                                "t_ms": t_ms,
+                                "silent": silent,
+                            });
+                            let _ = app_handle.emit("audio-silence", payload);
+                        }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                             // UI fell behind — drop frames, keep going.
                             continue;

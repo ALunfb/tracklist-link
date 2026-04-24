@@ -17,6 +17,8 @@ import {
   X,
 } from "lucide-react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
+import { ObsClient } from "../../lib/obs-websocket";
+import { loadObsSettings, saveObsSettings, type ObsWsSettings } from "../../lib/obs-storage";
 import butterchurn from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
 import { useLiveBeat, useLiveFft } from "../../lib/live-audio";
@@ -728,15 +730,19 @@ export function VisualizerTab() {
 }
 
 /**
- * Modal that assembles the companion's OBS Browser Source URL — fetches
- * the current token + port from the backend, stamps them into a
- * ready-to-paste URL that loads the fullscreen /visualizer page, and
- * exposes Copy + Open-in-browser actions.
+ * Modal that assembles the companion's OBS Browser Source URL + optionally
+ * installs it into the streamer's OBS automatically via obs-websocket v5.
  *
- * We pull the token fresh instead of caching at mount so rotating it in
- * Settings while the modal's closed doesn't silently ship stale URLs.
+ * Two tabs:
+ *   - **One-click** (default): connects to OBS's built-in WebSocket
+ *     Server, creates a Browser Source pointed at our viz page, places
+ *     it in the current scene. Remembers password in localStorage.
+ *   - **Copy URL**: the original paste-it-yourself flow for streamers
+ *     who don't want the companion talking to OBS, or who use
+ *     Streamlabs / some other broadcaster.
  */
 function ObsIntegrationModal({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<"auto" | "manual">("auto");
   const [url, setUrl] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -745,10 +751,6 @@ function ObsIntegrationModal({ onClose }: { onClose: () => void }) {
     (async () => {
       try {
         const cfg = await getConfig();
-        // The fullscreen viz page lives on music.blackpearl.gg, not
-        // localhost — it connects BACK to the companion's WS. This is
-        // the same split the overlay uses (site-hosted viewer, local
-        // companion audio source).
         const base = "https://music.blackpearl.gg/visualizer";
         const params = new URLSearchParams();
         params.set("token", cfg.token);
@@ -773,7 +775,7 @@ function ObsIntegrationModal({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="glass-panel max-w-xl p-6"
+        className="glass-panel max-w-xl w-full p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-2">
@@ -791,12 +793,33 @@ function ObsIntegrationModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        <p className="mt-3 text-sm text-slate-300 leading-relaxed">
-          Paste the URL below into an OBS <b>Browser Source</b>. The visualizer
-          renders fullscreen inside OBS, connects back to this companion for
-          audio, and cycles presets every 30 seconds. No second monitor, no
-          window capture.
-        </p>
+        {/* Tab switcher. One-click is default because it's the easier flow
+            for the streamer who has obs-websocket enabled (default since
+            OBS 28). Manual remains a first-class path. */}
+        <div className="mt-4 flex items-center gap-1 rounded-md border border-surface-border bg-base-800 p-1">
+          <button
+            onClick={() => setTab("auto")}
+            className={cn(
+              "flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors",
+              tab === "auto"
+                ? "bg-accent/20 text-accent"
+                : "text-slate-400 hover:text-slate-200",
+            )}
+          >
+            One-click install
+          </button>
+          <button
+            onClick={() => setTab("manual")}
+            className={cn(
+              "flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors",
+              tab === "manual"
+                ? "bg-accent/20 text-accent"
+                : "text-slate-400 hover:text-slate-200",
+            )}
+          >
+            Copy URL
+          </button>
+        </div>
 
         {error ? (
           <div className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">
@@ -804,65 +827,282 @@ function ObsIntegrationModal({ onClose }: { onClose: () => void }) {
           </div>
         ) : null}
 
-        <div className="mt-4 flex items-stretch gap-2">
-          <code className="flex-1 truncate rounded-md border border-surface-border bg-base-800/80 px-3 py-2 font-mono text-xs text-slate-100">
-            {url || "Loading…"}
-          </code>
-          <button
-            onClick={() => void doCopy()}
-            disabled={!url}
-            className="inline-flex items-center gap-1.5 rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-accent hover:bg-accent/20 disabled:opacity-60"
-          >
-            {copied ? (
-              <>
-                <Check className="h-3.5 w-3.5" />
-                Copied
-              </>
-            ) : (
-              <>
-                <Copy className="h-3.5 w-3.5" />
-                Copy
-              </>
-            )}
-          </button>
-          <button
-            onClick={() => url && void openUrl(url)}
-            disabled={!url}
-            className="inline-flex items-center gap-1.5 rounded-md border border-surface-border bg-surface px-3 py-2 text-xs text-slate-200 hover:bg-surface-hover hover:text-white disabled:opacity-60"
-          >
-            Preview
-          </button>
-        </div>
-
-        <div className="mt-5 space-y-3 text-sm text-slate-300">
-          <div className="text-[11px] uppercase tracking-widest text-slate-500">
-            Three-step setup
-          </div>
-          <ol className="list-decimal space-y-2 pl-5 leading-relaxed">
-            <li>
-              In OBS: <b>+</b> button under Sources → <b>Browser</b> → name it
-              e.g. &ldquo;Visualizer&rdquo;.
-            </li>
-            <li>
-              URL: paste the one above. Width × Height:{" "}
-              <b>1920 × 1080</b> (or match your scene). Tick{" "}
-              <b>Shutdown source when not visible</b> to save CPU when on
-              a different scene.
-            </li>
-            <li>
-              <b>Click OK.</b> The preset auto-rotates. The visualizer flashes
-              on beats once this companion sees audio.
-            </li>
-          </ol>
-        </div>
+        {tab === "auto" ? (
+          <ObsAutoInstall url={url} />
+        ) : (
+          <ObsManualInstall url={url} copied={copied} onCopy={doCopy} />
+        )}
 
         <div className="mt-5 rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-[11px] text-amber-300/90 leading-relaxed">
-          <b>Heads up:</b> the URL contains your companion token. It only works
-          from OBS running on this machine + the Tracklist origin, but don&apos;t
-          share it publicly (Regenerate token in Settings if it ever leaks).
-          Auto-install via obs-websocket is coming in a later release — for now
-          the paste flow is 20 seconds start to finish.
+          <b>Heads up:</b> the URL contains your companion token. It only
+          works from OBS running on this machine + the Tracklist origin,
+          but don&apos;t share it publicly (Regenerate token in Settings
+          if it ever leaks).
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One-click install tab. Connects to OBS's built-in WebSocket Server
+ * (default ws://127.0.0.1:4455), authenticates, creates a Browser
+ * Source in the current scene pointed at the companion's viz URL.
+ *
+ * Requires OBS 28+ with Tools → WebSocket Server Settings → Enable.
+ * If a password is set, the streamer copies it once from that dialog;
+ * we remember it locally so subsequent installs are truly one-click.
+ */
+function ObsAutoInstall({ url }: { url: string }) {
+  const [settings, setSettings] = useState<ObsWsSettings>(() => loadObsSettings());
+  const [remember, setRemember] = useState<boolean>(() => {
+    const s = loadObsSettings();
+    return s.password.length > 0;
+  });
+  const [status, setStatus] = useState<
+    | { kind: "idle" }
+    | { kind: "connecting" }
+    | { kind: "authed"; obs: ObsClient; scene: string }
+    | { kind: "installing" }
+    | { kind: "done"; scene: string; name: string }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  const disconnect = (clientStatus: typeof status) => {
+    if (clientStatus.kind === "authed") clientStatus.obs.close();
+  };
+
+  const connect = async () => {
+    setStatus({ kind: "connecting" });
+    const obs = new ObsClient();
+    const wsUrl = `ws://${settings.host}:${settings.port}`;
+    try {
+      await obs.connect(wsUrl, settings.password || undefined);
+      const scene = await obs.getCurrentSceneName();
+      setStatus({ kind: "authed", obs, scene });
+      if (remember) saveObsSettings(settings);
+      else saveObsSettings({ ...settings, password: "" });
+    } catch (err) {
+      obs.close();
+      setStatus({ kind: "error", message: (err as Error).message });
+    }
+  };
+
+  const install = async () => {
+    if (status.kind !== "authed") return;
+    if (!url) return;
+    const obs = status.obs;
+    setStatus({ kind: "installing" });
+    try {
+      // Avoid duplicate-name collisions by timestamping the input. OBS
+      // CreateInput rejects existing names outright, and a streamer
+      // probably wants multiple viz sources across scenes anyway.
+      const inputName = `Tracklist Visualizer ${new Date().toLocaleTimeString(
+        [],
+        { hour: "2-digit", minute: "2-digit" },
+      )}`;
+      const res = await obs.createBrowserSource({
+        sceneName: status.scene,
+        inputName,
+        url,
+        width: 1920,
+        height: 1080,
+        shutdownWhenNotVisible: true,
+      });
+      obs.close();
+      setStatus({ kind: "done", scene: res.sceneName, name: res.inputName });
+    } catch (err) {
+      setStatus({ kind: "error", message: (err as Error).message });
+    }
+  };
+
+  return (
+    <div className="mt-5 space-y-4">
+      <p className="text-sm text-slate-300 leading-relaxed">
+        Enter your OBS WebSocket password (if set) and we&apos;ll drop the
+        visualizer into your <b>current scene</b> as a Browser Source.
+        Nothing else in OBS is touched.
+      </p>
+
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+        <label className="text-xs text-slate-300">
+          <div className="mb-1 text-[11px] uppercase tracking-widest text-slate-500">
+            OBS WebSocket password
+          </div>
+          <input
+            type="password"
+            value={settings.password}
+            onChange={(e) =>
+              setSettings((s) => ({ ...s, password: e.target.value }))
+            }
+            placeholder="leave blank if auth is off"
+            className="w-full rounded-md border border-surface-border bg-base-800 px-3 py-2 text-xs font-mono text-slate-100 outline-none focus:border-accent"
+          />
+        </label>
+        <label className="text-xs text-slate-300">
+          <div className="mb-1 text-[11px] uppercase tracking-widest text-slate-500">
+            Port
+          </div>
+          <input
+            type="text"
+            value={String(settings.port)}
+            onChange={(e) =>
+              setSettings((s) => ({
+                ...s,
+                port: Math.max(1, Math.min(65535, Number(e.target.value) || 4455)),
+              }))
+            }
+            className="w-24 rounded-md border border-surface-border bg-base-800 px-3 py-2 text-xs font-mono text-slate-100 outline-none focus:border-accent"
+          />
+        </label>
+      </div>
+
+      <label className="flex items-center gap-2 text-xs text-slate-400">
+        <input
+          type="checkbox"
+          checked={remember}
+          onChange={(e) => setRemember(e.target.checked)}
+          className="h-4 w-4 rounded border-surface-border"
+        />
+        Remember password on this computer
+      </label>
+
+      {/* Status + action row. The button morphs: Connect → Install →
+          Done. Error state offers a retry inline so the streamer isn't
+          stranded. */}
+      <div className="flex items-center gap-3">
+        {status.kind === "idle" || status.kind === "error" ? (
+          <button
+            onClick={() => void connect()}
+            disabled={!url}
+            className="inline-flex items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-4 py-2 text-sm text-accent hover:bg-accent/20 disabled:opacity-60"
+          >
+            Connect to OBS
+          </button>
+        ) : null}
+        {status.kind === "connecting" ? (
+          <span className="inline-flex items-center gap-2 text-sm text-amber-300">
+            <div className="h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-transparent" />
+            Connecting…
+          </span>
+        ) : null}
+        {status.kind === "authed" ? (
+          <>
+            <button
+              onClick={() => void install()}
+              className="inline-flex items-center gap-2 rounded-md border border-accent/40 bg-accent hover:bg-accent-dim text-white px-4 py-2 text-sm font-medium"
+            >
+              Install into &ldquo;{status.scene}&rdquo;
+            </button>
+            <button
+              onClick={() => {
+                disconnect(status);
+                setStatus({ kind: "idle" });
+              }}
+              className="text-xs text-slate-400 hover:text-slate-200"
+            >
+              Disconnect
+            </button>
+          </>
+        ) : null}
+        {status.kind === "installing" ? (
+          <span className="inline-flex items-center gap-2 text-sm text-amber-300">
+            <div className="h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-transparent" />
+            Adding Browser Source…
+          </span>
+        ) : null}
+        {status.kind === "done" ? (
+          <span className="inline-flex items-center gap-2 text-sm text-emerald-400">
+            <Check className="h-4 w-4" />
+            Added &ldquo;{status.name}&rdquo; to &ldquo;{status.scene}&rdquo;.
+            Check OBS.
+          </span>
+        ) : null}
+      </div>
+
+      {status.kind === "error" ? (
+        <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-300 leading-relaxed">
+          {status.message}
+        </div>
+      ) : null}
+
+      <div className="rounded-md border border-surface-border bg-base-800/40 p-3 text-[11px] text-slate-400 leading-relaxed">
+        <b className="text-slate-200">First time?</b> In OBS: Tools →
+        WebSocket Server Settings → tick <i>Enable WebSocket server</i> →
+        Show Connect Info → copy the generated password. Paste above,
+        check "Remember," connect. Next install is a single click.
+      </div>
+    </div>
+  );
+}
+
+function ObsManualInstall({
+  url,
+  copied,
+  onCopy,
+}: {
+  url: string;
+  copied: boolean;
+  onCopy: () => void | Promise<void>;
+}) {
+  return (
+    <div className="mt-5 space-y-4">
+      <p className="text-sm text-slate-300 leading-relaxed">
+        Paste the URL below into an OBS <b>Browser Source</b>. The
+        visualizer renders fullscreen inside OBS, connects back to this
+        companion for audio, and cycles presets every 30 seconds.
+      </p>
+
+      <div className="flex items-stretch gap-2">
+        <code className="flex-1 truncate rounded-md border border-surface-border bg-base-800/80 px-3 py-2 font-mono text-xs text-slate-100">
+          {url || "Loading…"}
+        </code>
+        <button
+          onClick={() => void onCopy()}
+          disabled={!url}
+          className="inline-flex items-center gap-1.5 rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-accent hover:bg-accent/20 disabled:opacity-60"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3.5 w-3.5" />
+              Copied
+            </>
+          ) : (
+            <>
+              <Copy className="h-3.5 w-3.5" />
+              Copy
+            </>
+          )}
+        </button>
+        <button
+          onClick={() => url && void openUrl(url)}
+          disabled={!url}
+          className="inline-flex items-center gap-1.5 rounded-md border border-surface-border bg-surface px-3 py-2 text-xs text-slate-200 hover:bg-surface-hover hover:text-white disabled:opacity-60"
+        >
+          Preview
+        </button>
+      </div>
+
+      <div className="space-y-3 text-sm text-slate-300">
+        <div className="text-[11px] uppercase tracking-widest text-slate-500">
+          Three-step setup
+        </div>
+        <ol className="list-decimal space-y-2 pl-5 leading-relaxed">
+          <li>
+            In OBS: <b>+</b> button under Sources → <b>Browser</b> →
+            name it e.g. &ldquo;Visualizer&rdquo;.
+          </li>
+          <li>
+            URL: paste the one above. Width × Height:{" "}
+            <b>1920 × 1080</b> (or match your scene). Tick{" "}
+            <b>Shutdown source when not visible</b> to save CPU when on a
+            different scene.
+          </li>
+          <li>
+            <b>Click OK.</b> The preset auto-rotates. The visualizer
+            flashes on beats once this companion sees audio.
+          </li>
+        </ol>
       </div>
     </div>
   );

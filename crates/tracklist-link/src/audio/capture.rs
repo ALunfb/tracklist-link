@@ -8,7 +8,7 @@
 //! quantum (commonly 480 or 960 samples at 48kHz). We downmix to mono and
 //! push into a ring buffer; the FFT task reads fixed-size windows from it.
 
-use super::{beat, fft, AudioFrame};
+use super::{beat, fft, silence, AudioFrame};
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
@@ -117,6 +117,7 @@ fn fft_loop(
     let mut seq: u64 = 0;
     let mut scratch = vec![0.0f32; WINDOW_SIZE];
     let mut beat_detector = beat::BeatDetector::new();
+    let mut silence_detector = silence::SilenceDetector::new();
     loop {
         // Block lightly while waiting for enough samples.
         {
@@ -164,6 +165,23 @@ fn fft_loop(
                 seq: hit.seq,
                 t_ms: hit.t_ms,
                 confidence: hit.confidence,
+            });
+        }
+
+        // Silence detection runs on the same RMS the level topic emits.
+        // State-change only — no per-frame "still silent" spam; consumers
+        // track the boolean themselves based on the last edge they saw.
+        if let Some(silence_event) =
+            silence_detector.push(rms, t_ms, silence::DEFAULT_SILENCE_RMS)
+        {
+            let (silent, event_seq, event_t) = match silence_event {
+                silence::SilenceEvent::Entered { seq, t_ms } => (true, seq, t_ms),
+                silence::SilenceEvent::Exited { seq, t_ms } => (false, seq, t_ms),
+            };
+            let _ = bus.send(AudioFrame::Silence {
+                seq: event_seq,
+                t_ms: event_t,
+                silent,
             });
         }
     }

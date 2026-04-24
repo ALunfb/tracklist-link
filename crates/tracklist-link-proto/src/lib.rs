@@ -48,6 +48,11 @@ pub enum Topic {
     /// client every few seconds.
     #[serde(rename = "system/heartbeat")]
     SystemHeartbeat,
+    /// Silence state-change event (audio/silence). Emitted on silence
+    /// entry + exit, not per-frame. Consumers track the last-seen
+    /// `silent` boolean themselves.
+    #[serde(rename = "audio/silence")]
+    AudioSilence,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +92,8 @@ pub enum ServerMessage {
     Beat(BeatEvent),
     #[serde(rename = "audio/bpm")]
     Bpm(BpmEstimate),
+    #[serde(rename = "audio/silence")]
+    Silence(SilenceEvent),
     #[serde(rename = "system/heartbeat")]
     Heartbeat(Heartbeat),
     /// Subscription error — e.g. requested topic not yet implemented. Clients
@@ -124,6 +131,15 @@ pub struct BeatEvent {
     pub t_ms: u64,
     /// Confidence 0..1.
     pub confidence: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SilenceEvent {
+    pub seq: u64,
+    pub t_ms: u64,
+    /// True when the stream just went silent; false when it just came
+    /// back. Edge-triggered — no per-frame spam.
+    pub silent: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
