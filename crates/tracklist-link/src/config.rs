@@ -33,6 +33,11 @@ pub struct Config {
     /// Sample rate we request from the audio device. 48000 is the WASAPI
     /// default on modern Windows.
     pub sample_rate: u32,
+    /// If true, the companion hides its window on launch — only the tray
+    /// icon is visible. Matches how audio apps (Discord, Spotify) behave
+    /// when configured to autostart on login.
+    #[serde(default)]
+    pub launch_minimized: bool,
 }
 
 impl Config {
@@ -78,6 +83,7 @@ impl Config {
                 "http://127.0.0.1:3000".into(),
             ],
             sample_rate: 48_000,
+            launch_minimized: false,
         }
     }
 

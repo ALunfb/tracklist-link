@@ -499,12 +499,23 @@ export function VisualizerTab() {
         </div>
       </div>
 
-      <div className="flex gap-3">
+      {/* When the Tune panel is open we pin the row to a fixed height so
+          the canvas doesn't shrink vertically to match its narrower
+          (panel-sharing) width. min(70vh, 560px) gives a big canvas on
+          tall monitors while keeping the controls visible on short ones. */}
+      <div
+        className="flex gap-3"
+        style={showTune ? { height: "min(70vh, 560px)" } : undefined}
+      >
         <div
           ref={containerRef}
           className={cn(
             "glass-panel relative flex-1 overflow-hidden",
-            fullscreen ? "" : "aspect-video",
+            fullscreen
+              ? ""
+              : showTune
+                ? "h-full"
+                : "aspect-video",
           )}
         >
           <canvas

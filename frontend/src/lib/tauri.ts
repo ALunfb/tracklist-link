@@ -18,6 +18,7 @@ export interface ConfigView {
   token: string;
   allowed_origins: string[];
   sample_rate: number;
+  launch_minimized: boolean;
 }
 
 export const getStatus = () => invoke<StatusView>("get_status");
@@ -41,6 +42,12 @@ export const readPreset = (filename: string) =>
 export const openPresetsFolder = () => invoke<void>("open_presets_folder");
 export const savePreset = (filename: string, contents: string) =>
   invoke<void>("save_preset", { filename, contents });
+
+export const getAutostart = () => invoke<boolean>("get_autostart");
+export const setAutostart = (enabled: boolean) =>
+  invoke<void>("set_autostart", { enabled });
+export const setLaunchMinimized = (enabled: boolean) =>
+  invoke<void>("set_launch_minimized", { enabled });
 
 export interface FftEvent {
   seq: number;

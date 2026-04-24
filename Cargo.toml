@@ -77,3 +77,9 @@ tauri = { version = "2", features = ["tray-icon", "image-png", "custom-protocol"
 tauri-build = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
+# Autostart — writes / removes the Windows HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+# entry under the user's profile. No admin rights required.
+tauri-plugin-autostart = "2"
+# Window state — saves window position/size/maximized state on close,
+# restores on next launch. Zero config required beyond plugin registration.
+tauri-plugin-window-state = "2"

@@ -49,6 +49,15 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Autostart plugin: registers the Run-key handler + exposes
+        // enable/disable/is_enabled commands. We pass the launch args
+        // `--start-minimized` so the binary can detect "woke up from
+        // autostart" vs manual launch.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostarted"]),
+        ))
         .setup(|app| {
             let cfg = Arc::new(Mutex::new(config::Config::load_or_create()?));
             {
@@ -133,6 +142,24 @@ fn main() {
                 });
             }
 
+            // Launch-minimized: if the streamer has the setting on OR the
+            // app was woken up from autostart (by tauri-plugin-autostart's
+            // --autostarted arg), start with the window hidden — tray icon
+            // only. Matches audio-app convention for login-start.
+            let started_from_autostart =
+                std::env::args().any(|a| a == "--autostarted");
+            let should_minimize = started_from_autostart
+                || {
+                    let state: tauri::State<'_, commands::AppState> = app.state();
+                    let cfg = state.cfg.lock().unwrap();
+                    cfg.launch_minimized
+                };
+            if should_minimize {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -146,6 +173,9 @@ fn main() {
             commands::read_preset,
             commands::open_presets_folder,
             commands::save_preset,
+            commands::get_autostart,
+            commands::set_autostart,
+            commands::set_launch_minimized,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tracklist Link");

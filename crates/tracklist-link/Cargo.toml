@@ -43,3 +43,5 @@ thiserror.workspace = true
 tauri.workspace = true
 tauri-plugin-shell.workspace = true
 tauri-plugin-dialog.workspace = true
+tauri-plugin-autostart.workspace = true
+tauri-plugin-window-state.workspace = true

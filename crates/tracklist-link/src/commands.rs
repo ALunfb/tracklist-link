@@ -7,6 +7,7 @@
 use crate::config::Config;
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_shell::ShellExt;
 
 /// Injected into Tauri's managed state during setup so every command can
@@ -29,6 +30,7 @@ pub struct ConfigView {
     pub token: String,
     pub allowed_origins: Vec<String>,
     pub sample_rate: u32,
+    pub launch_minimized: bool,
 }
 
 #[tauri::command]
@@ -50,6 +52,7 @@ pub fn get_config(state: tauri::State<'_, AppState>) -> ConfigView {
         token: cfg.token.clone(),
         allowed_origins: cfg.allowed_origins.clone(),
         sample_rate: cfg.sample_rate,
+        launch_minimized: cfg.launch_minimized,
     }
 }
 
@@ -269,6 +272,40 @@ pub fn save_preset(filename: String, contents: String) -> Result<(), String> {
         }
     }
     std::fs::write(&path, contents).map_err(|e| format!("write preset: {e}"))?;
+    Ok(())
+}
+
+/// Reads the current Run-key state via tauri-plugin-autostart. Returns
+/// false if the manager isn't available (e.g., dev runs).
+#[tauri::command]
+pub fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
+    let manager = app.autolaunch();
+    manager.is_enabled().map_err(|e| e.to_string())
+}
+
+/// Enable / disable the Windows Run-key entry that makes the companion
+/// start on login. Requires no admin rights — writes under HKCU.
+#[tauri::command]
+pub fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|e| e.to_string())
+    } else {
+        manager.disable().map_err(|e| e.to_string())
+    }
+}
+
+/// Persist the launch-minimized preference to config.toml. Does not apply
+/// immediately — takes effect on next app start. Pairs naturally with
+/// autostart so the companion launches silently in the tray.
+#[tauri::command]
+pub fn set_launch_minimized(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut cfg = state.cfg.lock().unwrap();
+    cfg.launch_minimized = enabled;
+    cfg.save().map_err(|e| e.to_string())?;
     Ok(())
 }
 

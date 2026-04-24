@@ -2,15 +2,21 @@ import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   FolderOpen,
+  Power,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import {
+  getAutostart,
   getConfig,
   openConfigFolder,
   regenerateToken,
+  setAutostart,
+  setLaunchMinimized,
   type ConfigView,
 } from "../../lib/tauri";
+import { cn } from "../../lib/cn";
 
 /**
  * Phase-1 settings: read-only display of the runtime config + destructive
@@ -23,10 +29,38 @@ import {
 export function SettingsTab() {
   const [config, setConfig] = useState<ConfigView | null>(null);
   const [regenBusy, setRegenBusy] = useState(false);
+  const [autostartOn, setAutostartOn] = useState<boolean | null>(null);
+  const [autostartBusy, setAutostartBusy] = useState(false);
+  const [launchMinBusy, setLaunchMinBusy] = useState(false);
 
   useEffect(() => {
     void getConfig().then(setConfig);
+    void getAutostart()
+      .then(setAutostartOn)
+      .catch(() => setAutostartOn(false));
   }, []);
+
+  const toggleAutostart = async () => {
+    if (autostartOn === null) return;
+    setAutostartBusy(true);
+    try {
+      await setAutostart(!autostartOn);
+      setAutostartOn(!autostartOn);
+    } finally {
+      setAutostartBusy(false);
+    }
+  };
+
+  const toggleLaunchMinimized = async () => {
+    if (!config) return;
+    setLaunchMinBusy(true);
+    try {
+      await setLaunchMinimized(!config.launch_minimized);
+      setConfig({ ...config, launch_minimized: !config.launch_minimized });
+    } finally {
+      setLaunchMinBusy(false);
+    }
+  };
 
   const handleRegen = async () => {
     const confirm = window.confirm(
@@ -59,6 +93,47 @@ export function SettingsTab() {
           matters — token rotation.
         </p>
       </div>
+
+      {/* Launch behavior — autostart + minimize-to-tray. Both land in the
+          Windows Run key + config.toml respectively; no admin rights. */}
+      <section className="glass-panel">
+        <div className="flex items-center justify-between gap-4 border-b border-surface-border p-4">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-100">
+              <Power className="h-4 w-4 text-accent" />
+              Launch on Windows startup
+            </div>
+            <p className="mt-1 max-w-md text-[11px] text-slate-500 leading-relaxed">
+              Adds a per-user Run-key entry so the companion is ready the
+              moment you log in. No admin rights needed, no system service.
+              Remove by toggling off.
+            </p>
+          </div>
+          <Toggle
+            on={autostartOn === true}
+            busy={autostartBusy || autostartOn === null}
+            onClick={toggleAutostart}
+          />
+        </div>
+        <div className="flex items-center justify-between gap-4 p-4">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-100">
+              <Sparkles className="h-4 w-4 text-accent" />
+              Start minimized to tray
+            </div>
+            <p className="mt-1 max-w-md text-[11px] text-slate-500 leading-relaxed">
+              Companion boots silently — only the tray icon shows. Pair
+              this with autostart for a no-interrupt login. Toggle the
+              window back on from the tray menu anytime.
+            </p>
+          </div>
+          <Toggle
+            on={config?.launch_minimized === true}
+            busy={launchMinBusy || !config}
+            onClick={toggleLaunchMinimized}
+          />
+        </div>
+      </section>
 
       <section className="glass-panel divide-y divide-surface-border">
         <Row
@@ -127,6 +202,39 @@ export function SettingsTab() {
         </div>
       </section>
     </div>
+  );
+}
+
+function Toggle({
+  on,
+  busy,
+  onClick,
+}: {
+  on: boolean;
+  busy: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={busy}
+      role="switch"
+      aria-checked={on}
+      className={cn(
+        "relative h-6 w-11 shrink-0 rounded-full border transition-colors",
+        on
+          ? "border-accent/50 bg-accent"
+          : "border-surface-border bg-surface-muted",
+        busy ? "opacity-60" : "hover:opacity-90",
+      )}
+    >
+      <span
+        className={cn(
+          "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+          on ? "translate-x-6" : "translate-x-0.5",
+        )}
+      />
+    </button>
   );
 }
 
