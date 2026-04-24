@@ -11,10 +11,10 @@ pub mod fft;
 pub mod silence;
 
 use serde::Serialize;
-use tracklist_link_proto::VizSettings;
+use tracklist_link_proto::{VizPreset, VizSettings};
 
-/// A single broadcastable frame produced by the audio pipeline (or, in
-/// the case of VizSettings, by a user-initiated IPC call). The WS server
+/// A single broadcastable frame produced by the audio pipeline (or, for
+/// the viz/* variants, by a user-initiated IPC call). The WS server
 /// filters per-subscription before serializing to the wire.
 #[derive(Debug, Clone, Serialize)]
 pub enum AudioFrame {
@@ -28,6 +28,10 @@ pub enum AudioFrame {
     /// slider changes in the Tune panel; broadcast to all clients so
     /// external visualizers (web /visualizer in OBS) mirror the local one.
     VizSettings(VizSettings),
+    /// Currently-active preset name (viz/preset topic). Edge-triggered
+    /// whenever the companion loads a preset so all connected
+    /// visualizers converge on the same pick.
+    VizPreset(VizPreset),
 }
 
 pub use capture::spawn_capture;

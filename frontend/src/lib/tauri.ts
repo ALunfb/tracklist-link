@@ -84,6 +84,12 @@ export interface VizSettingsPayload {
 export const setVizSettings = (settings: VizSettingsPayload) =>
   invoke<void>("set_viz_settings", { settings });
 
+/** Broadcast the current preset name. Invoked by VisualizerTab after
+ *  every loadPreset (auto-cycle or manual pick) so all connected
+ *  visualizer instances converge on the same preset. Fire-and-forget. */
+export const setVizPreset = (name: string) =>
+  invoke<void>("set_viz_preset", { name });
+
 export interface FftEvent {
   seq: number;
   t_ms: number;

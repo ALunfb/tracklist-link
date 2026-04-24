@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::broadcast;
-use tracklist_link_proto::VizSettings;
+use tracklist_link_proto::{VizPreset, VizSettings};
 
 /// Injected into Tauri's managed state during setup so every command can
 /// reach the single Config cell the capture thread + WS server also share,
@@ -22,8 +22,12 @@ pub struct AppState {
     /// Latest VizSettings pushed by the companion frontend. Held so newly
     /// connecting WS clients can get a snapshot immediately after Hello.
     pub viz_settings: Arc<RwLock<VizSettings>>,
+    /// Currently-active preset name. Same snapshot-on-Hello pattern as
+    /// viz_settings — lets freshly-connecting web clients load the right
+    /// preset without waiting for the companion to cycle.
+    pub viz_preset: Arc<RwLock<VizPreset>>,
     /// The audio broadcast bus — shared with capture/server for emitting
-    /// VizSettings changes as `AudioFrame::VizSettings` to all subscribers.
+    /// viz/* changes as `AudioFrame::Viz*` to all subscribers.
     pub bus: broadcast::Sender<AudioFrame>,
 }
 
@@ -104,6 +108,25 @@ pub fn set_viz_settings(
 #[tauri::command]
 pub fn get_viz_settings(state: tauri::State<'_, AppState>) -> VizSettings {
     *state.viz_settings.read().unwrap()
+}
+
+/// Broadcast the currently-active preset name to all WS clients.
+/// Invoked by the frontend after every `loadPreset` (auto-cycle or
+/// manual pick). External visualizers use this to mirror the companion's
+/// preset selection, keeping all visualizer instances on the same
+/// preset across the stream.
+#[tauri::command]
+pub fn set_viz_preset(
+    state: tauri::State<'_, AppState>,
+    name: String,
+) -> Result<(), String> {
+    let preset = VizPreset { name };
+    {
+        let mut w = state.viz_preset.write().unwrap();
+        *w = preset.clone();
+    }
+    let _ = state.bus.send(AudioFrame::VizPreset(preset));
+    Ok(())
 }
 
 /// Set the beat detector sensitivity live. Lower = more beats fire.

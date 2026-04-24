@@ -91,6 +91,11 @@ fn main() {
             let viz_settings = std::sync::Arc::new(std::sync::RwLock::new(
                 tracklist_link_proto::VizSettings::default(),
             ));
+            // Same pattern for the currently-active preset name; the
+            // frontend invokes set_viz_preset after every loadPreset.
+            let viz_preset = std::sync::Arc::new(std::sync::RwLock::new(
+                tracklist_link_proto::VizPreset::default(),
+            ));
 
             // WS server on its own tokio runtime so the UI's async work
             // doesn't share a scheduler with audio fan-out.
@@ -100,10 +105,11 @@ fn main() {
             let server_cfg = cfg.clone();
             let server_bus = bus_tx.clone();
             let server_viz = viz_settings.clone();
+            let server_preset = viz_preset.clone();
             std::thread::spawn(move || {
                 let _ = rt.block_on(async move {
                     let snapshot = server_cfg.lock().unwrap().clone();
-                    server::run(snapshot, server_bus, server_viz).await
+                    server::run(snapshot, server_bus, server_viz, server_preset).await
                 });
             });
 
@@ -114,6 +120,7 @@ fn main() {
                 cfg,
                 beat_sensitivity,
                 viz_settings,
+                viz_preset,
                 bus: bus_tx.clone(),
             });
 
@@ -161,6 +168,11 @@ fn main() {
                         Ok(audio::AudioFrame::VizSettings(_)) => {
                             // The frontend IS the source of these; no
                             // need to echo them back via Tauri events.
+                        }
+                        Ok(audio::AudioFrame::VizPreset(_)) => {
+                            // Same — the frontend invokes set_viz_preset
+                            // itself on every loadPreset, so there's
+                            // nothing to tell it over Tauri events.
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                             // UI fell behind — drop frames, keep going.
@@ -226,6 +238,7 @@ fn main() {
             commands::set_beat_sensitivity,
             commands::set_viz_settings,
             commands::get_viz_settings,
+            commands::set_viz_preset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tracklist Link");
