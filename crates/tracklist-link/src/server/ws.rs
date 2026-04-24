@@ -15,7 +15,7 @@ use crate::config::Config;
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
@@ -24,13 +24,14 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, warn};
 use tracklist_link_proto::{
     BeatEvent, ClientMessage, FftFrame, Heartbeat, LevelFrame, ServerMessage, SilenceEvent,
-    Topic, PROTOCOL_VERSION,
+    Topic, VizSettings, PROTOCOL_VERSION,
 };
 
 pub async fn handle(
     stream: TcpStream,
     cfg: Arc<Config>,
     bus: broadcast::Sender<AudioFrame>,
+    viz_settings: Arc<RwLock<VizSettings>>,
 ) -> Result<()> {
     // We need to validate headers BEFORE the WS upgrade completes, and
     // tungstenite's `accept_hdr_async` callback lets us do exactly that:
@@ -85,6 +86,16 @@ pub async fn handle(
         sample_rate: cfg.sample_rate,
     })?;
     tx.send(Message::Text(hello)).await?;
+
+    // Send the current VizSettings snapshot right after Hello so freshly-
+    // connected clients (e.g. the web /visualizer in OBS) mirror the Tune
+    // panel's current state without waiting for the streamer to nudge a
+    // slider. Sent unconditionally — Topic::VizSettings is a "config"
+    // channel rather than a high-frequency stream, so there's no reason
+    // to gate it on subscription.
+    let snapshot = *viz_settings.read().unwrap();
+    let viz_msg = serde_json::to_string(&ServerMessage::VizSettings(snapshot))?;
+    tx.send(Message::Text(viz_msg)).await?;
 
     // Per-connection subscription set.
     let mut subs: HashSet<Topic> = HashSet::new();
@@ -141,6 +152,12 @@ pub async fn handle(
                     }
                     Ok(AudioFrame::Silence { seq, t_ms, silent }) if subs.contains(&Topic::AudioSilence) => {
                         let msg = ServerMessage::Silence(SilenceEvent { seq, t_ms, silent });
+                        tx.send(Message::Text(serde_json::to_string(&msg)?)).await?;
+                    }
+                    // VizSettings is always-on (like Heartbeat). Every
+                    // change reaches every client regardless of subs.
+                    Ok(AudioFrame::VizSettings(settings)) => {
+                        let msg = ServerMessage::VizSettings(settings);
                         tx.send(Message::Text(serde_json::to_string(&msg)?)).await?;
                     }
                     Ok(_) => { /* not subscribed — drop */ }

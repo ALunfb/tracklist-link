@@ -4,11 +4,14 @@
 //! `Config` + companion internals. Frontend code in `frontend/src/lib/tauri.ts`
 //! calls them via `invoke("command_name", ...)`.
 
+use crate::audio::AudioFrame;
 use crate::config::Config;
 use serde::Serialize;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_shell::ShellExt;
+use tokio::sync::broadcast;
+use tracklist_link_proto::VizSettings;
 
 /// Injected into Tauri's managed state during setup so every command can
 /// reach the single Config cell the capture thread + WS server also share,
@@ -16,6 +19,12 @@ use tauri_plugin_shell::ShellExt;
 pub struct AppState {
     pub cfg: Arc<Mutex<Config>>,
     pub beat_sensitivity: Arc<RwLock<f32>>,
+    /// Latest VizSettings pushed by the companion frontend. Held so newly
+    /// connecting WS clients can get a snapshot immediately after Hello.
+    pub viz_settings: Arc<RwLock<VizSettings>>,
+    /// The audio broadcast bus — shared with capture/server for emitting
+    /// VizSettings changes as `AudioFrame::VizSettings` to all subscribers.
+    pub bus: broadcast::Sender<AudioFrame>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -66,6 +75,35 @@ pub fn get_config(state: tauri::State<'_, AppState>) -> ConfigView {
         audio_device_name: cfg.audio_device_name.clone(),
         beat_sensitivity: cfg.beat_sensitivity,
     }
+}
+
+/// Live-push viz tuning to every connected WS client. Called by the
+/// Tune panel whenever a slider moves (and once on mount with the
+/// localStorage-restored starting values). Stores the latest snapshot
+/// in AppState so new WS clients can pull it on Hello.
+#[tauri::command]
+pub fn set_viz_settings(
+    state: tauri::State<'_, AppState>,
+    settings: VizSettings,
+) -> Result<(), String> {
+    {
+        let mut w = state.viz_settings.write().unwrap();
+        *w = settings;
+    }
+    // Best-effort — if no one's subscribed, `send` returns an error
+    // that's meaningless here (it just means the channel has no
+    // receivers yet; when a client connects it'll read the snapshot
+    // from AppState on Hello anyway).
+    let _ = state.bus.send(AudioFrame::VizSettings(settings));
+    Ok(())
+}
+
+/// Read the current VizSettings snapshot. Mostly a stub — the frontend
+/// uses localStorage as its source of truth. Exposed so integration
+/// tests + debugging have a way in.
+#[tauri::command]
+pub fn get_viz_settings(state: tauri::State<'_, AppState>) -> VizSettings {
+    *state.viz_settings.read().unwrap()
 }
 
 /// Set the beat detector sensitivity live. Lower = more beats fire.

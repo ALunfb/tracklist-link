@@ -63,6 +63,27 @@ export const setAudioDevice = (name: string | null) =>
 export const setBeatSensitivity = (value: number) =>
   invoke<void>("set_beat_sensitivity", { value });
 
+/** VizSettings shape mirrors `tracklist_link_proto::VizSettings`. Rust
+ *  expects camelCase via `#[serde(rename_all = "camelCase")]` — the
+ *  fields here match the TS VizSettings from lib/viz-settings.ts exactly
+ *  so we can pass the local object straight through. */
+export interface VizSettingsPayload {
+  audioGain: number;
+  attack: number;
+  release: number;
+  spectrumTilt: number;
+  noiseGate: number;
+  autoCycleSeconds: number;
+  blendTime: number;
+}
+
+/** Push current Tune settings to the Rust WS server so every connected
+ *  external client (the web /visualizer running in OBS) mirrors them
+ *  live. Fire-and-forget — local viz keeps reading from localStorage
+ *  directly, so failures never disrupt the in-app experience. */
+export const setVizSettings = (settings: VizSettingsPayload) =>
+  invoke<void>("set_viz_settings", { settings });
+
 export interface FftEvent {
   seq: number;
   t_ms: number;
