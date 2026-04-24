@@ -24,7 +24,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, warn};
 use tracklist_link_proto::{
     BeatEvent, ClientMessage, FftFrame, Heartbeat, LevelFrame, ServerMessage, SilenceEvent,
-    Topic, VizSettings, PROTOCOL_VERSION,
+    Topic, VizPreset, VizSettings, PROTOCOL_VERSION,
 };
 
 pub async fn handle(
@@ -32,6 +32,7 @@ pub async fn handle(
     cfg: Arc<Config>,
     bus: broadcast::Sender<AudioFrame>,
     viz_settings: Arc<RwLock<VizSettings>>,
+    viz_preset: Arc<RwLock<VizPreset>>,
 ) -> Result<()> {
     // We need to validate headers BEFORE the WS upgrade completes, and
     // tungstenite's `accept_hdr_async` callback lets us do exactly that:
@@ -97,6 +98,18 @@ pub async fn handle(
     let viz_msg = serde_json::to_string(&ServerMessage::VizSettings(snapshot))?;
     tx.send(Message::Text(viz_msg)).await?;
 
+    // Same snapshot pattern for the current preset — so a newly-opened
+    // OBS Browser Source loads the right preset immediately rather than
+    // cycling to something random and waiting for the companion's next
+    // broadcast. Empty name = companion hasn't loaded any preset yet;
+    // clients should keep their current visual in that case.
+    let preset_snapshot = viz_preset.read().unwrap().clone();
+    if !preset_snapshot.name.is_empty() {
+        let preset_msg =
+            serde_json::to_string(&ServerMessage::VizPreset(preset_snapshot))?;
+        tx.send(Message::Text(preset_msg)).await?;
+    }
+
     // Per-connection subscription set.
     let mut subs: HashSet<Topic> = HashSet::new();
     let mut bus_rx = bus.subscribe();
@@ -154,10 +167,14 @@ pub async fn handle(
                         let msg = ServerMessage::Silence(SilenceEvent { seq, t_ms, silent });
                         tx.send(Message::Text(serde_json::to_string(&msg)?)).await?;
                     }
-                    // VizSettings is always-on (like Heartbeat). Every
-                    // change reaches every client regardless of subs.
+                    // VizSettings + VizPreset are always-on (like Heartbeat).
+                    // Every change reaches every client regardless of subs.
                     Ok(AudioFrame::VizSettings(settings)) => {
                         let msg = ServerMessage::VizSettings(settings);
+                        tx.send(Message::Text(serde_json::to_string(&msg)?)).await?;
+                    }
+                    Ok(AudioFrame::VizPreset(preset)) => {
+                        let msg = ServerMessage::VizPreset(preset);
                         tx.send(Message::Text(serde_json::to_string(&msg)?)).await?;
                     }
                     Ok(_) => { /* not subscribed — drop */ }

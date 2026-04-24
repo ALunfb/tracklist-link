@@ -29,6 +29,7 @@ import {
   readPreset,
   setBeatSensitivity as setBeatSensitivityCmd,
   setVizSettings as setVizSettingsCmd,
+  setVizPreset as setVizPresetCmd,
 } from "../../lib/tauri";
 import {
   loadVizSettings,
@@ -416,6 +417,10 @@ export function VisualizerTab() {
     try {
       // Blend time is live-tunable from the Tune panel.
       viz.loadPreset(preset, Math.max(0, settingsRef.current.blendTime));
+      // Broadcast to external WS clients (web /visualizer in OBS) so
+      // all visualizer instances converge on this same preset. Fire-and-
+      // forget; the local viz keeps working regardless.
+      void setVizPresetCmd(name);
     } catch (err) {
       console.warn("loadPreset failed", err);
     }

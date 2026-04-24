@@ -15,12 +15,13 @@ use std::sync::{Arc, RwLock};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
-use tracklist_link_proto::VizSettings;
+use tracklist_link_proto::{VizPreset, VizSettings};
 
 pub async fn run(
     cfg: Config,
     bus: broadcast::Sender<AudioFrame>,
     viz_settings: Arc<RwLock<VizSettings>>,
+    viz_preset: Arc<RwLock<VizPreset>>,
 ) -> Result<()> {
     let addr = cfg.bind_addr();
     let cfg = Arc::new(cfg);
@@ -45,8 +46,9 @@ pub async fn run(
         let cfg = cfg.clone();
         let bus = bus.clone();
         let viz_settings = viz_settings.clone();
+        let viz_preset = viz_preset.clone();
         tokio::spawn(async move {
-            if let Err(err) = ws::handle(stream, cfg, bus, viz_settings).await {
+            if let Err(err) = ws::handle(stream, cfg, bus, viz_settings, viz_preset).await {
                 warn!(?err, %peer, "ws handler exited with error");
             }
         });

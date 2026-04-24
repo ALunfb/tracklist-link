@@ -60,6 +60,12 @@ pub enum Topic {
     /// live, without requiring per-URL configuration.
     #[serde(rename = "viz/settings")]
     VizSettings,
+    /// Currently-active preset name. Broadcast whenever the companion
+    /// loads a new preset (auto-cycle or manual pick). External clients
+    /// mirror the selection so all visualizer instances (companion app,
+    /// web `/visualizer`, OBS Browser Source) show the same preset.
+    #[serde(rename = "viz/preset")]
+    VizPreset,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +109,8 @@ pub enum ServerMessage {
     Silence(SilenceEvent),
     #[serde(rename = "viz/settings")]
     VizSettings(VizSettings),
+    #[serde(rename = "viz/preset")]
+    VizPreset(VizPreset),
     #[serde(rename = "system/heartbeat")]
     Heartbeat(Heartbeat),
     /// Subscription error — e.g. requested topic not yet implemented. Clients
@@ -202,4 +210,13 @@ impl Default for VizSettings {
             blend_time: 2.0,
         }
     }
+}
+
+/// Currently-active preset name. Empty string = no preset selected yet
+/// (initial state before any load). External clients that recognize the
+/// name load it; ones that don't (different preset pool version, etc.)
+/// keep their current visual.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VizPreset {
+    pub name: String,
 }
