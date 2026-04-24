@@ -141,38 +141,74 @@ export function VisualizerTab() {
     silent.connect(ctx.destination);
     viz.connectAudio(silent);
 
-    // Monkey-patch sampleAudio: push our FFT bands into the analyser-fed
-    // arrays. Butterchurn reads these as 0..255 integers every frame.
-    const audio = (viz as unknown as { audio: { freqArray: Uint8Array; timeByteArray: Uint8Array; sampleAudio: () => void } }).audio;
-    audio.sampleAudio = function () {
+    // Monkey-patch sampleAudio: let butterchurn's own implementation run
+    // first (so it allocates / zero-fills whatever arrays its current
+    // version uses — 2.6.x uses split freqArrayL/R + timeByteArrayL/R),
+    // then overwrite any of the known audio fields with our FFT data.
+    // Robust to library version drift: we iterate known field names and
+    // only touch ones that exist, instead of hard-assuming a layout.
+    const audioAny = (viz as unknown as { audio: Record<string, unknown> }).audio;
+    const origSampleAudio = (audioAny.sampleAudio as () => void).bind(audioAny);
+
+    const FREQ_FIELDS = ["freqArray", "freqArrayL", "freqArrayR"];
+    const TIME_FIELDS = ["timeByteArray", "timeByteArrayL", "timeByteArrayR"];
+
+    audioAny.sampleAudio = function () {
+      // Always call the original first so butterchurn can populate / resize
+      // its internal buffers from its (silent) analyser. Prevents the
+      // "Cannot read property length of undefined" crash if a field we
+      // try to overwrite hasn't been lazily allocated yet.
+      origSampleAudio();
+
       const bands = bandsRef.current;
-      const n = this.freqArray.length;
-      if (!bands || bands.length === 0) {
-        this.freqArray.fill(0);
-        this.timeByteArray.fill(128);
-        return;
+      if (!bands || bands.length === 0) return;
+
+      // Populate every frequency buffer we can find. For stereo
+      // (freqArrayL + freqArrayR), put the same spectrum into both —
+      // perfect L/R split isn't worth the bookkeeping for a viz feed.
+      for (const field of FREQ_FIELDS) {
+        const arr = (this as Record<string, unknown>)[field];
+        if (
+          arr &&
+          typeof (arr as { length?: unknown }).length === "number"
+        ) {
+          const buf = arr as Uint8Array;
+          const n = buf.length;
+          for (let i = 0; i < n; i++) {
+            const src = Math.floor((i / n) * bands.length);
+            const v = bands[src] ?? 0;
+            buf[i] = Math.min(255, Math.max(0, Math.floor(v * 255)));
+          }
+        }
       }
+
+      // Synthesize a time-domain waveform so "wave" shapes animate.
+      // Amplitude tracks the spectrum sum; not physically accurate but
+      // gives MilkDrop's wave routines something to work with.
       let sum = 0;
-      for (let i = 0; i < n; i++) {
-        const src = Math.floor((i / n) * bands.length);
-        const v = bands[src] ?? 0;
-        this.freqArray[i] = Math.min(255, Math.max(0, Math.floor(v * 255)));
-        sum += v;
-      }
-      // Synthesize a time-domain waveform whose amplitude tracks the
-      // spectrum sum. Not physically correct (real PCM would have phase
-      // information), but gives MilkDrop's "wave" shapes something to
-      // animate against — otherwise `wave_a = 0` presets look dead.
-      const amp = Math.min(1, (sum / n) * 3.0);
-      const base = this.timeByteArray.length;
-      for (let i = 0; i < base; i++) {
-        const osc = Math.sin((i / base) * Math.PI * 6) * amp * 96;
-        this.timeByteArray[i] = Math.max(
-          0,
-          Math.min(255, 128 + Math.floor(osc)),
-        );
+      for (let k = 0; k < bands.length; k++) sum += bands[k] ?? 0;
+      const amp = Math.min(1, (sum / bands.length) * 3.0);
+      for (const field of TIME_FIELDS) {
+        const arr = (this as Record<string, unknown>)[field];
+        if (
+          arr &&
+          typeof (arr as { length?: unknown }).length === "number"
+        ) {
+          const buf = arr as Uint8Array;
+          const n = buf.length;
+          for (let i = 0; i < n; i++) {
+            const osc = Math.sin((i / n) * Math.PI * 6) * amp * 96;
+            buf[i] = Math.max(0, Math.min(255, 128 + Math.floor(osc)));
+          }
+        }
       }
     };
+
+    // Chromium gates AudioContext construction + audio-graph work behind
+    // a user gesture. Tauri's WebView2 inherits that policy. Resume once
+    // we've got a handle — the visualizer needs the context actually
+    // running, not just constructed, for its render path to be stable.
+    void ctx.resume();
 
     // ResizeObserver → keep the canvas buffer matched to its layout size.
     // Without this, preset render looks stretched when the window resizes.
