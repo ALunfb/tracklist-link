@@ -228,10 +228,13 @@ function Toggle({
         busy ? "opacity-60" : "hover:opacity-90",
       )}
     >
+      {/* Anchor the handle at left-0.5; translate-x from there on toggle.
+          Without the `left` anchor absolute positioning was leaving the
+          handle stuck against the right edge in both states. */}
       <span
         className={cn(
-          "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-          on ? "translate-x-6" : "translate-x-0.5",
+          "absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+          on ? "translate-x-[20px]" : "translate-x-0",
         )}
       />
     </button>
