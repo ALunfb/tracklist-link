@@ -10,12 +10,19 @@ import {
   Play,
   Search,
   Shuffle,
+  SlidersHorizontal,
   X,
 } from "lucide-react";
 import butterchurn from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
 import { useLiveFft } from "../../lib/live-audio";
 import { listPresets, openPresetsFolder, readPreset } from "../../lib/tauri";
+import {
+  loadVizSettings,
+  saveVizSettings,
+  type VizSettings,
+} from "../../lib/viz-settings";
+import { VizTunePanel } from "../VizTunePanel";
 import { cn } from "../../lib/cn";
 
 /**
@@ -101,6 +108,22 @@ export function VisualizerTab() {
   const [fullscreen, setFullscreen] = useState(false);
   const [query, setQuery] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showTune, setShowTune] = useState(false);
+
+  // Tuning: live-editable audio + transport settings persisted to
+  // localStorage. The sampleAudio override reads from settingsRef every
+  // frame so slider drags feel instant without re-mounting the viz.
+  const [settings, setSettings] = useState<VizSettings>(() => loadVizSettings());
+  const settingsRef = useRef<VizSettings>(settings);
+  useEffect(() => {
+    settingsRef.current = settings;
+    saveVizSettings(settings);
+  }, [settings]);
+
+  // Per-band envelope state for the attack/release smoothing applied
+  // inside sampleAudio. Length auto-grows to match whatever Butterchurn's
+  // analyser buffer size is the first time we see it.
+  const bandEnvRef = useRef<Float32Array>(new Float32Array(0));
 
   // Filtered preset list driven by the search box. Case-insensitive; we
   // keep a parallel array of *original* indices so selecting a filtered
@@ -163,37 +186,74 @@ export function VisualizerTab() {
       const bands = bandsRef.current;
       if (!bands || bands.length === 0) return;
 
-      // Populate every frequency buffer we can find. For stereo
-      // (freqArrayL + freqArrayR), put the same spectrum into both —
-      // perfect L/R split isn't worth the bookkeeping for a viz feed.
+      // Pull live settings once per frame so mid-drag slider moves take
+      // effect without having to re-mount the visualizer.
+      const s = settingsRef.current;
+      const gain = s.audioGain;
+      const tilt = s.spectrumTilt;
+      const gate = s.noiseGate;
+      const attack = s.attack;
+      const release = s.release;
+
+      // Find the first buffer butterchurn actually allocates so we can
+      // derive the target analyser-band count. Treat this as the canonical
+      // destination size for the envelope follower.
+      let targetLen = 0;
       for (const field of FREQ_FIELDS) {
         const arr = (this as Record<string, unknown>)[field];
-        if (
-          arr &&
-          typeof (arr as { length?: unknown }).length === "number"
-        ) {
+        if (arr && typeof (arr as { length?: unknown }).length === "number") {
+          targetLen = (arr as Uint8Array).length;
+          break;
+        }
+      }
+      if (targetLen === 0) return;
+
+      if (bandEnvRef.current.length !== targetLen) {
+        bandEnvRef.current = new Float32Array(targetLen);
+      }
+      const env = bandEnvRef.current;
+
+      // Stage 1: upsample + shape + smooth into the envelope buffer (0..1).
+      for (let i = 0; i < targetLen; i++) {
+        const src = Math.floor((i / targetLen) * bands.length);
+        let v = (bands[src] ?? 0) * gain;
+        // Linear tilt: i=0 → (1 - tilt), i=N-1 → (1 + tilt). Flat at 0.
+        const tiltMul = 1 + tilt * ((i / targetLen) * 2 - 1);
+        v *= tiltMul;
+        // Noise gate — a hard knee is cheap, musical feel fine.
+        if (v < gate) v = 0;
+        if (v < 0) v = 0;
+        if (v > 1) v = 1;
+        const prev = env[i]!;
+        const k = v > prev ? attack : release;
+        env[i] = prev + (v - prev) * k;
+      }
+
+      // Stage 2: fan the envelope into every frequency buffer that exists
+      // (mono + stereo-split variants) as 0..255 bytes.
+      for (const field of FREQ_FIELDS) {
+        const arr = (this as Record<string, unknown>)[field];
+        if (arr && typeof (arr as { length?: unknown }).length === "number") {
           const buf = arr as Uint8Array;
           const n = buf.length;
+          // If somehow sized differently than targetLen, just interpolate.
           for (let i = 0; i < n; i++) {
-            const src = Math.floor((i / n) * bands.length);
-            const v = bands[src] ?? 0;
-            buf[i] = Math.min(255, Math.max(0, Math.floor(v * 255)));
+            const idx = n === targetLen ? i : Math.floor((i / n) * targetLen);
+            buf[i] = Math.min(255, Math.max(0, Math.floor((env[idx] ?? 0) * 255)));
           }
         }
       }
 
-      // Synthesize a time-domain waveform so "wave" shapes animate.
-      // Amplitude tracks the spectrum sum; not physically accurate but
-      // gives MilkDrop's wave routines something to work with.
+      // Stage 3: synthesize a time-domain waveform keyed on overall
+      // envelope amplitude so "wave" presets animate. Not physically
+      // accurate PCM, but convincing enough for the routines that key
+      // off waveform energy.
       let sum = 0;
-      for (let k = 0; k < bands.length; k++) sum += bands[k] ?? 0;
-      const amp = Math.min(1, (sum / bands.length) * 3.0);
+      for (let k = 0; k < env.length; k++) sum += env[k]!;
+      const amp = Math.min(1, (sum / env.length) * 3.0);
       for (const field of TIME_FIELDS) {
         const arr = (this as Record<string, unknown>)[field];
-        if (
-          arr &&
-          typeof (arr as { length?: unknown }).length === "number"
-        ) {
+        if (arr && typeof (arr as { length?: unknown }).length === "number") {
           const buf = arr as Uint8Array;
           const n = buf.length;
           for (let i = 0; i < n; i++) {
@@ -264,22 +324,24 @@ export function VisualizerTab() {
     const preset = presetMap[name];
     if (!preset) return;
     try {
-      // 2-second blend matches MilkDrop's default preset-change feel.
-      viz.loadPreset(preset, 2.0);
+      // Blend time is live-tunable from the Tune panel.
+      viz.loadPreset(preset, Math.max(0, settingsRef.current.blendTime));
     } catch (err) {
       console.warn("loadPreset failed", err);
     }
   }, [presetIndex, presetMap, presetNames]);
 
-  // Auto-cycle — swap preset every 30s when enabled. Rough MilkDrop
-  // default; tuneable in settings later.
+  // Auto-cycle — swap preset every N seconds when enabled, where N comes
+  // from the Tune panel. Depend on settings.autoCycleSeconds explicitly
+  // so slider changes re-arm the interval immediately.
   useEffect(() => {
     if (!autoCycle) return;
+    const ms = Math.max(5, settings.autoCycleSeconds) * 1000;
     const id = window.setInterval(() => {
       setPresetIndex((i) => (i + 1) % presetNames.length);
-    }, 30_000);
+    }, ms);
     return () => window.clearInterval(id);
-  }, [autoCycle, presetNames.length]);
+  }, [autoCycle, presetNames.length, settings.autoCycleSeconds]);
 
   // Fullscreen via the Fullscreen API. Tauri wraps Chromium, so this
   // works exactly as in a browser — the whole webview goes fullscreen.
@@ -397,6 +459,19 @@ export function VisualizerTab() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setShowTune((v) => !v)}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs",
+              showTune
+                ? "border-accent/50 bg-accent/15 text-accent"
+                : "border-surface-border bg-surface text-slate-300 hover:bg-surface-hover hover:text-white",
+            )}
+            title="Tune visualizer settings"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Tune
+          </button>
+          <button
             onClick={() => setRefreshTick((t) => t + 1)}
             className="inline-flex items-center gap-2 rounded-md border border-surface-border bg-surface px-3 py-1.5 text-xs text-slate-300 hover:bg-surface-hover hover:text-white"
             title="Re-scan presets folder"
@@ -424,26 +499,35 @@ export function VisualizerTab() {
         </div>
       </div>
 
-      <div
-        ref={containerRef}
-        className={cn(
-          "glass-panel relative overflow-hidden",
-          fullscreen ? "" : "aspect-video",
-        )}
-      >
-        <canvas
-          ref={canvasRef}
-          className="h-full w-full"
-          style={{ display: "block" }}
-        />
-        {/* Fullscreen toggle floats over the canvas, top-right. */}
-        <button
-          onClick={toggleFullscreen}
-          className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-md bg-black/40 text-slate-200 backdrop-blur hover:bg-black/60"
-          title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+      <div className="flex gap-3">
+        <div
+          ref={containerRef}
+          className={cn(
+            "glass-panel relative flex-1 overflow-hidden",
+            fullscreen ? "" : "aspect-video",
+          )}
         >
-          <Maximize2 className="h-4 w-4" />
-        </button>
+          <canvas
+            ref={canvasRef}
+            className="h-full w-full"
+            style={{ display: "block" }}
+          />
+          {/* Fullscreen toggle floats over the canvas, top-right. */}
+          <button
+            onClick={toggleFullscreen}
+            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-md bg-black/40 text-slate-200 backdrop-blur hover:bg-black/60"
+            title={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+          >
+            <Maximize2 className="h-4 w-4" />
+          </button>
+        </div>
+        {showTune ? (
+          <VizTunePanel
+            settings={settings}
+            onChange={setSettings}
+            onClose={() => setShowTune(false)}
+          />
+        ) : null}
       </div>
 
       {/* Transport bar — preset name + prev/next/random/cycle/play. */}
