@@ -7,6 +7,11 @@ import {
 interface Props {
   settings: VizSettings;
   onChange: (next: VizSettings) => void;
+  /** Server-side beat sensitivity (companion config). Separate from
+   *  VizSettings because it persists via IPC → config.toml, not
+   *  localStorage. Null when the companion hasn't replied yet. */
+  beatSensitivity: number | null;
+  onBeatSensitivityChange: (v: number) => void;
   onClose: () => void;
 }
 
@@ -15,7 +20,13 @@ interface Props {
  * so the streamer can dial in the feel with the canvas visible in the
  * same glance. Reset button snaps everything back to DEFAULT_VIZ_SETTINGS.
  */
-export function VizTunePanel({ settings, onChange, onClose }: Props) {
+export function VizTunePanel({
+  settings,
+  onChange,
+  beatSensitivity,
+  onBeatSensitivityChange,
+  onClose,
+}: Props) {
   const set = (key: keyof VizSettings, value: number) =>
     onChange({ ...settings, [key]: value });
 
@@ -100,6 +111,23 @@ export function VizTunePanel({ settings, onChange, onClose }: Props) {
             max={0.3}
             step={0.005}
             format={(v) => (v === 0 ? "off" : v.toFixed(3))}
+          />
+        </Section>
+
+        <Section label="Beat detection">
+          <Slider
+            label="Sensitivity"
+            hint="Lower fires more beats — crank this if your music is quiet under voice chat. Higher = fewer, stronger beats."
+            value={beatSensitivity ?? 1.6}
+            onChange={onBeatSensitivityChange}
+            min={0.5}
+            max={3.0}
+            step={0.05}
+            format={(v) =>
+              v <= 0.8 ? `${v.toFixed(2)} (hot)`
+                : v >= 2.4 ? `${v.toFixed(2)} (strict)`
+                : v.toFixed(2)
+            }
           />
         </Section>
 

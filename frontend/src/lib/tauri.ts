@@ -20,6 +20,7 @@ export interface ConfigView {
   sample_rate: number;
   launch_minimized: boolean;
   audio_device_name: string | null;
+  beat_sensitivity: number;
 }
 
 export interface AudioDeviceInfo {
@@ -59,6 +60,8 @@ export const listAudioDevices = () =>
   invoke<AudioDeviceInfo[]>("list_audio_devices");
 export const setAudioDevice = (name: string | null) =>
   invoke<void>("set_audio_device", { name });
+export const setBeatSensitivity = (value: number) =>
+  invoke<void>("set_beat_sensitivity", { value });
 
 export interface FftEvent {
   seq: number;

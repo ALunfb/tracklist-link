@@ -72,11 +72,18 @@ fn main() {
             // Audio capture pushes into a broadcast channel; the WS server
             // subscribes and fans out to each connected overlay.
             let (bus_tx, _) = tokio::sync::broadcast::channel::<audio::AudioFrame>(64);
-            let (sample_rate, device_name) = {
+            let (sample_rate, device_name, initial_sensitivity) = {
                 let g = cfg.lock().unwrap();
-                (g.sample_rate, g.audio_device_name.clone())
+                (g.sample_rate, g.audio_device_name.clone(), g.beat_sensitivity)
             };
-            audio::spawn_capture(device_name, sample_rate, bus_tx.clone())?;
+            let beat_sensitivity =
+                std::sync::Arc::new(std::sync::RwLock::new(initial_sensitivity));
+            audio::spawn_capture(
+                device_name,
+                sample_rate,
+                bus_tx.clone(),
+                beat_sensitivity.clone(),
+            )?;
 
             // WS server on its own tokio runtime so the UI's async work
             // doesn't share a scheduler with audio fan-out.
@@ -92,8 +99,13 @@ fn main() {
                 });
             });
 
-            // Share the Config cell with every IPC command.
-            app.manage(commands::AppState { cfg });
+            // Share the Config cell + beat sensitivity shared state with
+            // every IPC command. Commands that mutate these do so through
+            // AppState, which hides the Arc<RwLock> / Arc<Mutex> details.
+            app.manage(commands::AppState {
+                cfg,
+                beat_sensitivity,
+            });
 
             // Bridge: audio broadcast bus → Tauri events. Lets the React
             // frontend consume FFT + level frames without authing against
@@ -189,6 +201,7 @@ fn main() {
             commands::set_launch_minimized,
             commands::list_audio_devices,
             commands::set_audio_device,
+            commands::set_beat_sensitivity,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tracklist Link");

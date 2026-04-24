@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -15,14 +15,20 @@ import {
 } from "lucide-react";
 import butterchurn from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
-import { useCallback } from "react";
 import { useLiveBeat, useLiveFft } from "../../lib/live-audio";
-import { listPresets, openPresetsFolder, readPreset } from "../../lib/tauri";
+import {
+  getConfig,
+  listPresets,
+  openPresetsFolder,
+  readPreset,
+  setBeatSensitivity as setBeatSensitivityCmd,
+} from "../../lib/tauri";
 import {
   loadVizSettings,
   saveVizSettings,
   type VizSettings,
 } from "../../lib/viz-settings";
+import { BpmEstimator } from "../../lib/bpm";
 import { VizTunePanel } from "../VizTunePanel";
 import { cn } from "../../lib/cn";
 
@@ -110,23 +116,57 @@ export function VisualizerTab() {
   const [query, setQuery] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showTune, setShowTune] = useState(false);
-  const [beatCount, setBeatCount] = useState(0);
+  const [bpm, setBpm] = useState<number | null>(null);
+  const [beatSensitivity, setBeatSensitivityState] = useState<number | null>(null);
+
+  // Beat envelope ref — a decaying 0..1 "how recent was a beat" value
+  // that sampleAudio reads each frame to add a gain boost. Makes the
+  // visualizer visibly pulse on kicks even when the underlying preset
+  // doesn't key hard on bass.
+  const beatEnvRef = useRef(0);
+  // BPM estimator — tracks recent beat timestamps, reports median-based
+  // estimate. Updated into bpm state on each beat so the header doesn't
+  // re-render 50 times per second for unrelated reasons.
+  const bpmEstimatorRef = useRef(new BpmEstimator());
 
   // Restart the CSS animation on each beat by removing + re-adding the
-  // class in a forced-reflow dance. Purely visual; Butterchurn itself
-  // already renders reactive — this is a companion-scope confirmation
-  // that beat detection is flowing, and a seed for future CS2-GSI
-  // effects that'll trigger the same class.
-  const onBeat = useCallback(() => {
+  // class in a forced-reflow dance. Also bumps the beat envelope (drives
+  // the Butterchurn gain boost) and updates the BPM estimate.
+  const onBeat = useCallback((evt: { t_ms: number }) => {
     const el = containerRef.current;
     if (el) {
       el.classList.remove("beat-flash");
-      void el.offsetWidth; // force reflow
+      void el.offsetWidth;
       el.classList.add("beat-flash");
     }
-    setBeatCount((n) => n + 1);
+    beatEnvRef.current = 1.0;
+    bpmEstimatorRef.current.push(evt.t_ms);
+    setBpm(bpmEstimatorRef.current.estimate());
   }, []);
   useLiveBeat(onBeat);
+
+  // Periodically re-estimate BPM even without new beats — lets stale
+  // detections age out to null, so the header shows "—" instead of a
+  // 3-minute-old "128" when the streamer pauses.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setBpm(bpmEstimatorRef.current.estimate());
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Load the companion's beat sensitivity from config on mount so the
+  // Tune panel slider starts at the persisted value, not a default.
+  useEffect(() => {
+    void getConfig()
+      .then((c) => setBeatSensitivityState(c.beat_sensitivity ?? 1.6))
+      .catch(() => setBeatSensitivityState(1.6));
+  }, []);
+
+  const onBeatSensitivityChange = useCallback((value: number) => {
+    setBeatSensitivityState(value);
+    void setBeatSensitivityCmd(value);
+  }, []);
 
   // Tuning: live-editable audio + transport settings persisted to
   // localStorage. The sampleAudio override reads from settingsRef every
@@ -207,7 +247,14 @@ export function VisualizerTab() {
       // Pull live settings once per frame so mid-drag slider moves take
       // effect without having to re-mount the visualizer.
       const s = settingsRef.current;
-      const gain = s.audioGain;
+      // Decay the beat envelope each frame (~60 fps → ~180 ms half-life).
+      // When a beat fires it's set to 1.0 by onBeat, then fades here, and
+      // we fold it into the gain so the spectrum visibly "punches" on
+      // kicks across every preset — even ones that don't key on bass.
+      beatEnvRef.current *= 0.88;
+      if (beatEnvRef.current < 0.005) beatEnvRef.current = 0;
+      const beatBoost = 1 + beatEnvRef.current * 0.55;
+      const gain = s.audioGain * beatBoost;
       const tilt = s.spectrumTilt;
       const gate = s.noiseGate;
       const attack = s.attack;
@@ -467,15 +514,10 @@ export function VisualizerTab() {
                 {" (◯)"}
               </>
             ) : null}
-            {beatCount > 0 ? (
-              <>
-                {" · "}
-                <span className="font-mono tabular-nums text-accent">
-                  {beatCount.toLocaleString()}
-                </span>{" "}
-                beats
-              </>
-            ) : null}
+            {" · "}
+            <span className="font-mono tabular-nums text-accent">
+              {bpm !== null ? `${bpm} BPM` : "— BPM"}
+            </span>
             {" · driven by your live audio"}
           </p>
           {userLoadError ? (
@@ -563,6 +605,8 @@ export function VisualizerTab() {
           <VizTunePanel
             settings={settings}
             onChange={setSettings}
+            beatSensitivity={beatSensitivity}
+            onBeatSensitivityChange={onBeatSensitivityChange}
             onClose={() => setShowTune(false)}
           />
         ) : null}

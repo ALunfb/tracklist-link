@@ -28,10 +28,15 @@ const HOP_SIZE: usize = 1024;
 /// system default. Devices are matched by exact name string; if the
 /// named device has vanished (unplugged since last config save), we fall
 /// back to default rather than failing startup.
+///
+/// `beat_sensitivity` — shared cell read by the beat detector on every
+/// FFT frame. Writing it (from a Tauri command) changes detection
+/// behavior live without restarting capture.
 pub fn spawn_capture(
     device_name: Option<String>,
     sample_rate: u32,
     bus: broadcast::Sender<AudioFrame>,
+    beat_sensitivity: Arc<std::sync::RwLock<f32>>,
 ) -> Result<()> {
     let host = cpal::default_host();
     let device = resolve_output_device(&host, device_name.as_deref())
@@ -69,7 +74,7 @@ pub fn spawn_capture(
 
     // FFT processor thread.
     let processor = fft::Processor::new(WINDOW_SIZE, actual_rate);
-    std::thread::spawn(move || fft_loop(ring, processor, bus));
+    std::thread::spawn(move || fft_loop(ring, processor, bus, beat_sensitivity));
 
     Ok(())
 }
@@ -107,6 +112,7 @@ fn fft_loop(
     ring: Arc<Mutex<Ring>>,
     mut processor: fft::Processor,
     bus: broadcast::Sender<AudioFrame>,
+    beat_sensitivity: Arc<std::sync::RwLock<f32>>,
 ) {
     let mut seq: u64 = 0;
     let mut scratch = vec![0.0f32; WINDOW_SIZE];
@@ -138,7 +144,12 @@ fn fft_loop(
         // Beat detection runs on the same bands the FFT emits so the
         // timestamps line up for cross-topic correlation (e.g. a consumer
         // that wants "was the last beat within 100ms of this round_win?").
-        let beat_hit = beat_detector.push(&bands64, t_ms);
+        // Sensitivity is re-read every frame so the Tune panel slider
+        // applies instantly with no restart.
+        let sensitivity = *beat_sensitivity
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
+        let beat_hit = beat_detector.push(&bands64, t_ms, sensitivity);
 
         // Best-effort broadcast — a slow client gets dropped frames, which
         // is fine. The seq counter lets them detect drops client-side.

@@ -6,14 +6,16 @@
 
 use crate::config::Config;
 use serde::Serialize;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_shell::ShellExt;
 
 /// Injected into Tauri's managed state during setup so every command can
-/// reach the single Config cell the capture thread + WS server also share.
+/// reach the single Config cell the capture thread + WS server also share,
+/// plus the shared beat-sensitivity cell the audio thread reads every frame.
 pub struct AppState {
     pub cfg: Arc<Mutex<Config>>,
+    pub beat_sensitivity: Arc<RwLock<f32>>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -32,6 +34,7 @@ pub struct ConfigView {
     pub sample_rate: u32,
     pub launch_minimized: bool,
     pub audio_device_name: Option<String>,
+    pub beat_sensitivity: f32,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -61,7 +64,27 @@ pub fn get_config(state: tauri::State<'_, AppState>) -> ConfigView {
         sample_rate: cfg.sample_rate,
         launch_minimized: cfg.launch_minimized,
         audio_device_name: cfg.audio_device_name.clone(),
+        beat_sensitivity: cfg.beat_sensitivity,
     }
+}
+
+/// Set the beat detector sensitivity live. Lower = more beats fire.
+/// Persists to config and updates the Arc<RwLock> the capture thread
+/// reads on every FFT frame, so the slider feels immediate.
+#[tauri::command]
+pub fn set_beat_sensitivity(
+    state: tauri::State<'_, AppState>,
+    value: f32,
+) -> Result<(), String> {
+    let clamped = value.clamp(0.3, 4.0);
+    {
+        let mut w = state.beat_sensitivity.write().unwrap();
+        *w = clamped;
+    }
+    let mut cfg = state.cfg.lock().unwrap();
+    cfg.beat_sensitivity = clamped;
+    cfg.save().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Enumerate cpal output devices we can capture from. Called by the

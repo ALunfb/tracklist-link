@@ -31,10 +31,12 @@ const MIN_BEAT_GAP_MS: u64 = 180;
 /// catch roughly the kick + bass-guitar region (~20-250 Hz).
 const BASS_BANDS: usize = 8;
 
-/// Multiplier on the rolling standard deviation. Higher = fewer / stronger
-/// beats. 1.6 is the sweet spot in casual testing; the frontend can filter
-/// further on `confidence` if needed.
-const SENSITIVITY: f32 = 1.6;
+/// Default multiplier on the rolling standard deviation. Higher = fewer
+/// and stronger beats detected; lower = more permissive. 1.6 is the
+/// initial value in casual testing; user-tunable via the Tune panel to
+/// compensate for low-volume streams (Spotify at 20% with voice chat
+/// produces quieter bass than the default assumes).
+pub const DEFAULT_SENSITIVITY: f32 = 1.6;
 
 pub struct BeatDetector {
     history: VecDeque<f32>,
@@ -51,10 +53,10 @@ impl BeatDetector {
         }
     }
 
-    /// Push a new FFT frame. Returns `Some((confidence, seq))` when this
-    /// frame crosses the beat threshold. Confidence is roughly how many
-    /// σ above the rolling mean the current energy is, normalized to 0..1.
-    pub fn push(&mut self, bands: &[f32], t_ms: u64) -> Option<BeatHit> {
+    /// Push a new FFT frame. Returns `Some(BeatHit)` when this frame
+    /// crosses the beat threshold. `sensitivity` is a runtime-tunable
+    /// multiplier on the rolling stddev (see DEFAULT_SENSITIVITY).
+    pub fn push(&mut self, bands: &[f32], t_ms: u64, sensitivity: f32) -> Option<BeatHit> {
         let bass = bass_energy(bands);
 
         // Warm-up: let history fill before we fire anything. Prevents a
@@ -68,7 +70,7 @@ impl BeatDetector {
         // Very quiet sections → very small std → any tiny wobble clears the
         // threshold. Floor the std so silence doesn't produce phantom beats.
         let effective_std = std.max(0.01);
-        let threshold = mean + SENSITIVITY * effective_std;
+        let threshold = mean + sensitivity * effective_std;
 
         let fired = bass > threshold
             && t_ms.saturating_sub(self.last_beat_ms) > MIN_BEAT_GAP_MS;
