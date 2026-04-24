@@ -28,6 +28,7 @@ import {
   openPresetsFolder,
   readPreset,
   setBeatSensitivity as setBeatSensitivityCmd,
+  setVizSettings as setVizSettingsCmd,
 } from "../../lib/tauri";
 import {
   loadVizSettings,
@@ -196,6 +197,10 @@ export function VisualizerTab() {
   useEffect(() => {
     settingsRef.current = settings;
     saveVizSettings(settings);
+    // Push to the Rust server so every external WS client (web
+    // /visualizer in OBS) mirrors the new values live. Fire-and-forget;
+    // the local viz keeps working off settingsRef regardless.
+    void setVizSettingsCmd(settings);
   }, [settings]);
 
   // Per-band envelope state for the attack/release smoothing applied

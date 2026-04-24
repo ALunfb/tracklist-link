@@ -85,6 +85,13 @@ fn main() {
                 beat_sensitivity.clone(),
             )?;
 
+            // VizSettings shared cell — read by the WS server to snapshot
+            // new clients on Hello, written by the `set_viz_settings`
+            // Tauri command as the companion frontend drags the sliders.
+            let viz_settings = std::sync::Arc::new(std::sync::RwLock::new(
+                tracklist_link_proto::VizSettings::default(),
+            ));
+
             // WS server on its own tokio runtime so the UI's async work
             // doesn't share a scheduler with audio fan-out.
             let rt = tokio::runtime::Builder::new_multi_thread()
@@ -92,10 +99,11 @@ fn main() {
                 .build()?;
             let server_cfg = cfg.clone();
             let server_bus = bus_tx.clone();
+            let server_viz = viz_settings.clone();
             std::thread::spawn(move || {
                 let _ = rt.block_on(async move {
                     let snapshot = server_cfg.lock().unwrap().clone();
-                    server::run(snapshot, server_bus).await
+                    server::run(snapshot, server_bus, server_viz).await
                 });
             });
 
@@ -105,6 +113,8 @@ fn main() {
             app.manage(commands::AppState {
                 cfg,
                 beat_sensitivity,
+                viz_settings,
+                bus: bus_tx.clone(),
             });
 
             // Bridge: audio broadcast bus → Tauri events. Lets the React
@@ -147,6 +157,10 @@ fn main() {
                                 "silent": silent,
                             });
                             let _ = app_handle.emit("audio-silence", payload);
+                        }
+                        Ok(audio::AudioFrame::VizSettings(_)) => {
+                            // The frontend IS the source of these; no
+                            // need to echo them back via Tauri events.
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                             // UI fell behind — drop frames, keep going.
@@ -210,6 +224,8 @@ fn main() {
             commands::list_audio_devices,
             commands::set_audio_device,
             commands::set_beat_sensitivity,
+            commands::set_viz_settings,
+            commands::get_viz_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tracklist Link");

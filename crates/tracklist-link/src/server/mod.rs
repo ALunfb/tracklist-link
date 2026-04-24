@@ -11,12 +11,17 @@ pub mod ws;
 use crate::audio::AudioFrame;
 use crate::config::Config;
 use anyhow::Result;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
+use tracklist_link_proto::VizSettings;
 
-pub async fn run(cfg: Config, bus: broadcast::Sender<AudioFrame>) -> Result<()> {
+pub async fn run(
+    cfg: Config,
+    bus: broadcast::Sender<AudioFrame>,
+    viz_settings: Arc<RwLock<VizSettings>>,
+) -> Result<()> {
     let addr = cfg.bind_addr();
     let cfg = Arc::new(cfg);
     let listener = TcpListener::bind(addr).await?;
@@ -39,8 +44,9 @@ pub async fn run(cfg: Config, bus: broadcast::Sender<AudioFrame>) -> Result<()> 
         }
         let cfg = cfg.clone();
         let bus = bus.clone();
+        let viz_settings = viz_settings.clone();
         tokio::spawn(async move {
-            if let Err(err) = ws::handle(stream, cfg, bus).await {
+            if let Err(err) = ws::handle(stream, cfg, bus, viz_settings).await {
                 warn!(?err, %peer, "ws handler exited with error");
             }
         });

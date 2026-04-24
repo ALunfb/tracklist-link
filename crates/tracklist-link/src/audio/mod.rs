@@ -11,9 +11,11 @@ pub mod fft;
 pub mod silence;
 
 use serde::Serialize;
+use tracklist_link_proto::VizSettings;
 
-/// A single broadcastable frame produced by the audio pipeline. The WS
-/// server filters per-subscription before serializing to the wire.
+/// A single broadcastable frame produced by the audio pipeline (or, in
+/// the case of VizSettings, by a user-initiated IPC call). The WS server
+/// filters per-subscription before serializing to the wire.
 #[derive(Debug, Clone, Serialize)]
 pub enum AudioFrame {
     Fft64 { seq: u64, t_ms: u64, bands: Vec<f32> },
@@ -22,6 +24,10 @@ pub enum AudioFrame {
     /// Silence entered / exited (audio/silence topic). `silent` indicates
     /// the NEW state: true = just went quiet, false = just came back.
     Silence { seq: u64, t_ms: u64, silent: bool },
+    /// Live viz-tuning push (viz/settings topic). Edge-triggered by
+    /// slider changes in the Tune panel; broadcast to all clients so
+    /// external visualizers (web /visualizer in OBS) mirror the local one.
+    VizSettings(VizSettings),
 }
 
 pub use capture::spawn_capture;

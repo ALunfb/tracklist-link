@@ -53,6 +53,13 @@ pub enum Topic {
     /// `silent` boolean themselves.
     #[serde(rename = "audio/silence")]
     AudioSilence,
+    /// Visualizer tuning settings. Edge-triggered: broadcast whenever the
+    /// streamer changes a slider in the companion's Tune panel (plus once
+    /// on companion boot so early clients pick up the starting values).
+    /// Web clients use these to mirror the companion's local viz tuning
+    /// live, without requiring per-URL configuration.
+    #[serde(rename = "viz/settings")]
+    VizSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +101,8 @@ pub enum ServerMessage {
     Bpm(BpmEstimate),
     #[serde(rename = "audio/silence")]
     Silence(SilenceEvent),
+    #[serde(rename = "viz/settings")]
+    VizSettings(VizSettings),
     #[serde(rename = "system/heartbeat")]
     Heartbeat(Heartbeat),
     /// Subscription error — e.g. requested topic not yet implemented. Clients
@@ -156,4 +165,41 @@ pub struct Heartbeat {
     pub subscribers: u32,
     /// Running since this unix ms.
     pub uptime_since_ms: u64,
+}
+
+/// Live visualizer tuning — mirror of the companion's VizSettings. Values
+/// arrive camelCase over the wire so JS consumers don't need to translate.
+/// All fields match their TypeScript counterparts in
+/// `frontend/src/lib/viz-settings.ts` both in name and semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VizSettings {
+    /// Pre-butterchurn spectrum multiplier. 1.0 = pass-through.
+    pub audio_gain: f32,
+    /// Fast-attack envelope alpha per band, 0..1.
+    pub attack: f32,
+    /// Slow-release envelope alpha per band, 0..1.
+    pub release: f32,
+    /// Linear bass/treble tilt. -1 = bass, +1 = treble, 0 = flat.
+    pub spectrum_tilt: f32,
+    /// Bands below this magnitude are zeroed before butterchurn sees them.
+    pub noise_gate: f32,
+    /// Seconds between auto-cycle preset swaps (when shuffle is on).
+    pub auto_cycle_seconds: u32,
+    /// Cross-fade duration when switching presets, seconds. 0 = hard cut.
+    pub blend_time: f32,
+}
+
+impl Default for VizSettings {
+    fn default() -> Self {
+        Self {
+            audio_gain: 1.0,
+            attack: 0.55,
+            release: 0.12,
+            spectrum_tilt: 0.0,
+            noise_gate: 0.0,
+            auto_cycle_seconds: 30,
+            blend_time: 2.0,
+        }
+    }
 }
