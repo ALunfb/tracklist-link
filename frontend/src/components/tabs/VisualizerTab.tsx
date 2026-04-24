@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Dice5,
   FolderOpen,
   Keyboard,
   Maximize2,
+  Monitor,
   Pause,
   Play,
   Search,
@@ -13,6 +16,7 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
+import { open as openUrl } from "@tauri-apps/plugin-shell";
 import butterchurn from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
 import { useLiveBeat, useLiveFft } from "../../lib/live-audio";
@@ -116,6 +120,7 @@ export function VisualizerTab() {
   const [query, setQuery] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showTune, setShowTune] = useState(false);
+  const [showObsModal, setShowObsModal] = useState(false);
   const [bpm, setBpm] = useState<number | null>(null);
   const [beatSensitivity, setBeatSensitivityState] = useState<number | null>(null);
 
@@ -528,6 +533,14 @@ export function VisualizerTab() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setShowObsModal(true)}
+            className="inline-flex items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs text-accent hover:bg-accent/20"
+            title="Get the Browser Source URL to drop into OBS"
+          >
+            <Monitor className="h-3.5 w-3.5" />
+            Add to OBS
+          </button>
+          <button
             onClick={() => setShowTune((v) => !v)}
             className={cn(
               "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs",
@@ -709,6 +722,148 @@ export function VisualizerTab() {
       </div>
 
       {showShortcuts ? <ShortcutsPanel onClose={() => setShowShortcuts(false)} /> : null}
+      {showObsModal ? <ObsIntegrationModal onClose={() => setShowObsModal(false)} /> : null}
+    </div>
+  );
+}
+
+/**
+ * Modal that assembles the companion's OBS Browser Source URL — fetches
+ * the current token + port from the backend, stamps them into a
+ * ready-to-paste URL that loads the fullscreen /visualizer page, and
+ * exposes Copy + Open-in-browser actions.
+ *
+ * We pull the token fresh instead of caching at mount so rotating it in
+ * Settings while the modal's closed doesn't silently ship stale URLs.
+ */
+function ObsIntegrationModal({ onClose }: { onClose: () => void }) {
+  const [url, setUrl] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const cfg = await getConfig();
+        // The fullscreen viz page lives on music.blackpearl.gg, not
+        // localhost — it connects BACK to the companion's WS. This is
+        // the same split the overlay uses (site-hosted viewer, local
+        // companion audio source).
+        const base = "https://music.blackpearl.gg/visualizer";
+        const params = new URLSearchParams();
+        params.set("token", cfg.token);
+        if (cfg.port !== 38475) params.set("port", String(cfg.port));
+        setUrl(`${base}?${params.toString()}`);
+      } catch (err) {
+        setError((err as Error).message);
+      }
+    })();
+  }, []);
+
+  const doCopy = async () => {
+    if (!url) return;
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur"
+      onClick={onClose}
+    >
+      <div
+        className="glass-panel max-w-xl p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-[11px] uppercase tracking-widest text-slate-500">
+              OBS integration
+            </div>
+            <h2 className="text-lg font-semibold">Add visualizer to OBS</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md border border-surface-border bg-surface px-2 py-1 text-xs text-slate-300 hover:bg-surface-hover hover:text-white"
+          >
+            Close
+          </button>
+        </div>
+
+        <p className="mt-3 text-sm text-slate-300 leading-relaxed">
+          Paste the URL below into an OBS <b>Browser Source</b>. The visualizer
+          renders fullscreen inside OBS, connects back to this companion for
+          audio, and cycles presets every 30 seconds. No second monitor, no
+          window capture.
+        </p>
+
+        {error ? (
+          <div className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="mt-4 flex items-stretch gap-2">
+          <code className="flex-1 truncate rounded-md border border-surface-border bg-base-800/80 px-3 py-2 font-mono text-xs text-slate-100">
+            {url || "Loading…"}
+          </code>
+          <button
+            onClick={() => void doCopy()}
+            disabled={!url}
+            className="inline-flex items-center gap-1.5 rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-accent hover:bg-accent/20 disabled:opacity-60"
+          >
+            {copied ? (
+              <>
+                <Check className="h-3.5 w-3.5" />
+                Copied
+              </>
+            ) : (
+              <>
+                <Copy className="h-3.5 w-3.5" />
+                Copy
+              </>
+            )}
+          </button>
+          <button
+            onClick={() => url && void openUrl(url)}
+            disabled={!url}
+            className="inline-flex items-center gap-1.5 rounded-md border border-surface-border bg-surface px-3 py-2 text-xs text-slate-200 hover:bg-surface-hover hover:text-white disabled:opacity-60"
+          >
+            Preview
+          </button>
+        </div>
+
+        <div className="mt-5 space-y-3 text-sm text-slate-300">
+          <div className="text-[11px] uppercase tracking-widest text-slate-500">
+            Three-step setup
+          </div>
+          <ol className="list-decimal space-y-2 pl-5 leading-relaxed">
+            <li>
+              In OBS: <b>+</b> button under Sources → <b>Browser</b> → name it
+              e.g. &ldquo;Visualizer&rdquo;.
+            </li>
+            <li>
+              URL: paste the one above. Width × Height:{" "}
+              <b>1920 × 1080</b> (or match your scene). Tick{" "}
+              <b>Shutdown source when not visible</b> to save CPU when on
+              a different scene.
+            </li>
+            <li>
+              <b>Click OK.</b> The preset auto-rotates. The visualizer flashes
+              on beats once this companion sees audio.
+            </li>
+          </ol>
+        </div>
+
+        <div className="mt-5 rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-[11px] text-amber-300/90 leading-relaxed">
+          <b>Heads up:</b> the URL contains your companion token. It only works
+          from OBS running on this machine + the Tracklist origin, but don&apos;t
+          share it publicly (Regenerate token in Settings if it ever leaks).
+          Auto-install via obs-websocket is coming in a later release — for now
+          the paste flow is 20 seconds start to finish.
+        </div>
+      </div>
     </div>
   );
 }
