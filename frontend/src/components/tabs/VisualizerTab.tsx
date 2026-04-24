@@ -21,13 +21,12 @@ import { ObsClient } from "../../lib/obs-websocket";
 import { loadObsSettings, saveObsSettings, type ObsWsSettings } from "../../lib/obs-storage";
 import butterchurn from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
-import { useLiveBeat, useLiveFft, useLiveSilence } from "../../lib/live-audio";
+import { useLiveFft, useLiveSilence } from "../../lib/live-audio";
 import {
   getConfig,
   listPresets,
   openPresetsFolder,
   readPreset,
-  setBeatSensitivity as setBeatSensitivityCmd,
   setVizSettings as setVizSettingsCmd,
   setVizPreset as setVizPresetCmd,
 } from "../../lib/tauri";
@@ -36,7 +35,6 @@ import {
   saveVizSettings,
   type VizSettings,
 } from "../../lib/viz-settings";
-import { BpmEstimator } from "../../lib/bpm";
 import { VizTunePanel } from "../VizTunePanel";
 import { cn } from "../../lib/cn";
 
@@ -125,70 +123,12 @@ export function VisualizerTab() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showTune, setShowTune] = useState(false);
   const [showObsModal, setShowObsModal] = useState(false);
-  const [bpm, setBpm] = useState<number | null>(null);
   const [silent, setSilent] = useState(false);
-  const [beatSensitivity, setBeatSensitivityState] = useState<number | null>(null);
-
-  // Beat envelope ref — a decaying 0..1 "how recent was a beat" value
-  // that sampleAudio reads each frame to add a gain boost. Makes the
-  // visualizer visibly pulse on kicks even when the underlying preset
-  // doesn't key hard on bass.
-  const beatEnvRef = useRef(0);
-  // BPM estimator — tracks recent beat timestamps, reports median-based
-  // estimate. Updated into bpm state on each beat so the header doesn't
-  // re-render 50 times per second for unrelated reasons.
-  const bpmEstimatorRef = useRef(new BpmEstimator());
-
-  // Restart the CSS animation on each beat by removing + re-adding the
-  // class in a forced-reflow dance. Also bumps the beat envelope (drives
-  // the Butterchurn gain boost) and updates the BPM estimate.
-  const onBeat = useCallback((evt: { t_ms: number }) => {
-    const el = containerRef.current;
-    if (el) {
-      el.classList.remove("beat-flash");
-      void el.offsetWidth;
-      el.classList.add("beat-flash");
-    }
-    beatEnvRef.current = 1.0;
-    bpmEstimatorRef.current.push(evt.t_ms);
-    setBpm(bpmEstimatorRef.current.estimate());
-  }, []);
-  useLiveBeat(onBeat);
 
   const onSilence = useCallback((evt: { silent: boolean }) => {
     setSilent(evt.silent);
-    if (evt.silent) {
-      // When silence starts, the BPM estimate goes stale fast — zero
-      // it immediately instead of showing a dangling 128 until the
-      // 12 s stale window kicks in.
-      bpmEstimatorRef.current = new BpmEstimator();
-      setBpm(null);
-    }
   }, []);
   useLiveSilence(onSilence);
-
-  // Periodically re-estimate BPM even without new beats — lets stale
-  // detections age out to null, so the header shows "—" instead of a
-  // 3-minute-old "128" when the streamer pauses.
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setBpm(bpmEstimatorRef.current.estimate());
-    }, 2000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  // Load the companion's beat sensitivity from config on mount so the
-  // Tune panel slider starts at the persisted value, not a default.
-  useEffect(() => {
-    void getConfig()
-      .then((c) => setBeatSensitivityState(c.beat_sensitivity ?? 1.6))
-      .catch(() => setBeatSensitivityState(1.6));
-  }, []);
-
-  const onBeatSensitivityChange = useCallback((value: number) => {
-    setBeatSensitivityState(value);
-    void setBeatSensitivityCmd(value);
-  }, []);
 
   // Tuning: live-editable audio + transport settings persisted to
   // localStorage. The sampleAudio override reads from settingsRef every
@@ -233,9 +173,14 @@ export function VisualizerTab() {
     const ctx = new AudioContext();
     audioContextRef.current = ctx;
 
+    // Force layout so the CSS-computed 16:9 dimensions are available
+    // before butterchurn initializes. Without this, an unmount/remount
+    // cycle (e.g. toggling the Tune drawer) can catch clientWidth at 0
+    // and butterchurn's internal render target gets stuck at 300×150.
+    void canvas.getBoundingClientRect();
     const viz = butterchurn.createVisualizer(ctx, canvas, {
-      width: canvas.clientWidth,
-      height: canvas.clientHeight,
+      width: canvas.clientWidth || 1280,
+      height: canvas.clientHeight || 720,
       pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
     });
     vizRef.current = viz;
@@ -273,22 +218,11 @@ export function VisualizerTab() {
       // Pull live settings once per frame so mid-drag slider moves take
       // effect without having to re-mount the visualizer.
       const s = settingsRef.current;
-      // Decay the beat envelope each frame (~60 fps → ~180 ms half-life).
-      // When a beat fires it's set to 1.0 by onBeat, then fades here, and
-      // we fold it into the gain so the spectrum visibly "punches" on
-      // kicks across every preset — even ones that don't key on bass.
-      beatEnvRef.current *= 0.88;
-      if (beatEnvRef.current < 0.005) beatEnvRef.current = 0;
-      const beatBoost = 1 + beatEnvRef.current * 0.55;
-      const gain = s.audioGain * beatBoost;
-      const tilt = s.spectrumTilt;
-      const gate = s.noiseGate;
-      const attack = s.attack;
-      const release = s.release;
+      const gain = s.audioGain;
+      const bassBoost = s.bassBoost;
 
       // Find the first buffer butterchurn actually allocates so we can
-      // derive the target analyser-band count. Treat this as the canonical
-      // destination size for the envelope follower.
+      // derive the target analyser-band count.
       let targetLen = 0;
       for (const field of FREQ_FIELDS) {
         const arr = (this as Record<string, unknown>)[field];
@@ -304,20 +238,23 @@ export function VisualizerTab() {
       }
       const env = bandEnvRef.current;
 
-      // Stage 1: upsample + shape + smooth into the envelope buffer (0..1).
+      // Stage 1: upsample bands + gain + bass boost (bottom third) into
+      // the env buffer. Temporal smoothing already lives in Rust's FFT
+      // processor — we don't layer another envelope follower here now
+      // that attack/release sliders are gone.
+      const bassCutoff = Math.floor(targetLen / 3);
       for (let i = 0; i < targetLen; i++) {
         const src = Math.floor((i / targetLen) * bands.length);
         let v = (bands[src] ?? 0) * gain;
-        // Linear tilt: i=0 → (1 - tilt), i=N-1 → (1 + tilt). Flat at 0.
-        const tiltMul = 1 + tilt * ((i / targetLen) * 2 - 1);
-        v *= tiltMul;
-        // Noise gate — a hard knee is cheap, musical feel fine.
-        if (v < gate) v = 0;
+        if (i < bassCutoff) {
+          // Fades in over the bottom third — strongest at i=0, zero at
+          // bassCutoff. Scaling factor at i=0 is (1 + bassBoost).
+          const t = 1 - i / bassCutoff;
+          v *= 1 + bassBoost * t;
+        }
         if (v < 0) v = 0;
         if (v > 1) v = 1;
-        const prev = env[i]!;
-        const k = v > prev ? attack : release;
-        env[i] = prev + (v - prev) * k;
+        env[i] = v;
       }
 
       // Stage 2: fan the envelope into every frequency buffer that exists
@@ -544,10 +481,6 @@ export function VisualizerTab() {
                 {" (◯)"}
               </>
             ) : null}
-            {" · "}
-            <span className="font-mono tabular-nums text-accent">
-              {bpm !== null ? `${bpm} BPM` : "— BPM"}
-            </span>
             {silent ? (
               <>
                 {" · "}
@@ -626,7 +559,7 @@ export function VisualizerTab() {
         <div
           ref={containerRef}
           className={cn(
-            "glass-panel relative flex-1 overflow-hidden",
+            "glass-panel relative flex flex-1 items-center justify-center overflow-hidden bg-black",
             fullscreen
               ? ""
               : showTune
@@ -634,10 +567,20 @@ export function VisualizerTab() {
                 : "aspect-video",
           )}
         >
+          {/* Canvas locked to 16:9 with CSS, centered on black. The
+              wrapping flex container letterbox / pillarboxes cleanly in
+              non-16:9 shapes (Tune drawer open, fullscreen on 21:9
+              monitor, etc.) rather than stretching the preset. Actual
+              render resolution still tracks canvas.clientWidth × DPR
+              via the ResizeObserver below, so quality never softens. */}
           <canvas
             ref={canvasRef}
-            className="h-full w-full"
-            style={{ display: "block" }}
+            style={{
+              display: "block",
+              aspectRatio: "16 / 9",
+              maxWidth: "100%",
+              maxHeight: "100%",
+            }}
           />
           {/* Fullscreen toggle floats over the canvas, top-right. */}
           <button
@@ -652,8 +595,6 @@ export function VisualizerTab() {
           <VizTunePanel
             settings={settings}
             onChange={setSettings}
-            beatSensitivity={beatSensitivity}
-            onBeatSensitivityChange={onBeatSensitivityChange}
             onClose={() => setShowTune(false)}
           />
         ) : null}

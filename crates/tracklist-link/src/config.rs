@@ -45,16 +45,6 @@ pub struct Config {
     /// explicit with a "applies on restart" hint.
     #[serde(default)]
     pub audio_device_name: Option<String>,
-    /// Beat detector threshold multiplier. Lower = more beats fire (good
-    /// for streamers playing quieter Spotify audio under voice chat).
-    /// Default 1.6 matches the code constant; Tune panel slider writes
-    /// this live via an Arc<RwLock> shared with the capture thread.
-    #[serde(default = "default_beat_sensitivity")]
-    pub beat_sensitivity: f32,
-}
-
-fn default_beat_sensitivity() -> f32 {
-    crate::audio::beat::DEFAULT_SENSITIVITY
 }
 
 impl Config {
@@ -102,7 +92,6 @@ impl Config {
             sample_rate: 48_000,
             launch_minimized: false,
             audio_device_name: None,
-            beat_sensitivity: crate::audio::beat::DEFAULT_SENSITIVITY,
         }
     }
 

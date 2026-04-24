@@ -20,7 +20,6 @@ export interface ConfigView {
   sample_rate: number;
   launch_minimized: boolean;
   audio_device_name: string | null;
-  beat_sensitivity: number;
 }
 
 export interface AudioDeviceInfo {
@@ -60,8 +59,6 @@ export const listAudioDevices = () =>
   invoke<AudioDeviceInfo[]>("list_audio_devices");
 export const setAudioDevice = (name: string | null) =>
   invoke<void>("set_audio_device", { name });
-export const setBeatSensitivity = (value: number) =>
-  invoke<void>("set_beat_sensitivity", { value });
 
 /** VizSettings shape mirrors `tracklist_link_proto::VizSettings`. Rust
  *  expects camelCase via `#[serde(rename_all = "camelCase")]` — the
@@ -69,10 +66,7 @@ export const setBeatSensitivity = (value: number) =>
  *  so we can pass the local object straight through. */
 export interface VizSettingsPayload {
   audioGain: number;
-  attack: number;
-  release: number;
-  spectrumTilt: number;
-  noiseGate: number;
+  bassBoost: number;
   autoCycleSeconds: number;
   blendTime: number;
 }
@@ -101,12 +95,6 @@ export interface LevelEvent {
   t_ms: number;
   rms: number;
   peak: number;
-}
-
-export interface BeatEvent {
-  seq: number;
-  t_ms: number;
-  confidence: number;
 }
 
 export interface SilenceEvent {

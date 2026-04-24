@@ -36,8 +36,11 @@ pub enum Topic {
     /// RMS + peak amplitude, 60 Hz. Payload: [`LevelFrame`].
     #[serde(rename = "audio/level")]
     AudioLevel,
-    /// Onset / beat event. Payload: [`BeatEvent`]. Future topic — currently
-    /// reserved so clients don't fall over if the companion starts emitting.
+    /// DEPRECATED — v0.8.0 removed beat detection. Kept here so older
+    /// web clients that still send `{"kind":"subscribe","topics":["audio/beat",…]}`
+    /// don't error-out the whole subscribe message; the server silently
+    /// never emits to this topic. Remove once cached old clients are
+    /// past their refresh window (~1 week).
     #[serde(rename = "audio/beat")]
     AudioBeat,
     /// BPM estimate. Future topic.
@@ -101,10 +104,6 @@ pub enum ServerMessage {
     Fft(FftFrame),
     #[serde(rename = "audio/level")]
     Level(LevelFrame),
-    #[serde(rename = "audio/beat")]
-    Beat(BeatEvent),
-    #[serde(rename = "audio/bpm")]
-    Bpm(BpmEstimate),
     #[serde(rename = "audio/silence")]
     Silence(SilenceEvent),
     #[serde(rename = "viz/settings")]
@@ -143,27 +142,12 @@ pub struct LevelFrame {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BeatEvent {
-    pub seq: u64,
-    pub t_ms: u64,
-    /// Confidence 0..1.
-    pub confidence: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SilenceEvent {
     pub seq: u64,
     pub t_ms: u64,
     /// True when the stream just went silent; false when it just came
     /// back. Edge-triggered — no per-frame spam.
     pub silent: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BpmEstimate {
-    pub t_ms: u64,
-    pub bpm: f32,
-    pub confidence: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,14 +168,10 @@ pub struct Heartbeat {
 pub struct VizSettings {
     /// Pre-butterchurn spectrum multiplier. 1.0 = pass-through.
     pub audio_gain: f32,
-    /// Fast-attack envelope alpha per band, 0..1.
-    pub attack: f32,
-    /// Slow-release envelope alpha per band, 0..1.
-    pub release: f32,
-    /// Linear bass/treble tilt. -1 = bass, +1 = treble, 0 = flat.
-    pub spectrum_tilt: f32,
-    /// Bands below this magnitude are zeroed before butterchurn sees them.
-    pub noise_gate: f32,
+    /// Bass boost, 0..1. Scales the bottom ~third of bands — 0 = flat,
+    /// 1 = double the bass. Treble side was removed because it had
+    /// little visible effect on butterchurn presets.
+    pub bass_boost: f32,
     /// Seconds between auto-cycle preset swaps (when shuffle is on).
     pub auto_cycle_seconds: u32,
     /// Cross-fade duration when switching presets, seconds. 0 = hard cut.
@@ -202,10 +182,7 @@ impl Default for VizSettings {
     fn default() -> Self {
         Self {
             audio_gain: 1.0,
-            attack: 0.55,
-            release: 0.12,
-            spectrum_tilt: 0.0,
-            noise_gate: 0.0,
+            bass_boost: 0.0,
             auto_cycle_seconds: 30,
             blend_time: 2.0,
         }

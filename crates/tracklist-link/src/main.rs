@@ -72,18 +72,11 @@ fn main() {
             // Audio capture pushes into a broadcast channel; the WS server
             // subscribes and fans out to each connected overlay.
             let (bus_tx, _) = tokio::sync::broadcast::channel::<audio::AudioFrame>(64);
-            let (sample_rate, device_name, initial_sensitivity) = {
+            let (sample_rate, device_name) = {
                 let g = cfg.lock().unwrap();
-                (g.sample_rate, g.audio_device_name.clone(), g.beat_sensitivity)
+                (g.sample_rate, g.audio_device_name.clone())
             };
-            let beat_sensitivity =
-                std::sync::Arc::new(std::sync::RwLock::new(initial_sensitivity));
-            audio::spawn_capture(
-                device_name,
-                sample_rate,
-                bus_tx.clone(),
-                beat_sensitivity.clone(),
-            )?;
+            audio::spawn_capture(device_name, sample_rate, bus_tx.clone())?;
 
             // VizSettings shared cell — read by the WS server to snapshot
             // new clients on Hello, written by the `set_viz_settings`
@@ -113,12 +106,11 @@ fn main() {
                 });
             });
 
-            // Share the Config cell + beat sensitivity shared state with
-            // every IPC command. Commands that mutate these do so through
-            // AppState, which hides the Arc<RwLock> / Arc<Mutex> details.
+            // Share the Config cell + viz state with every IPC command.
+            // Commands that mutate these do so through AppState, which
+            // hides the Arc<RwLock> / Arc<Mutex> details.
             app.manage(commands::AppState {
                 cfg,
-                beat_sensitivity,
                 viz_settings,
                 viz_preset,
                 bus: bus_tx.clone(),
@@ -148,14 +140,6 @@ fn main() {
                                 "peak": peak,
                             });
                             let _ = app_handle.emit("audio-level", payload);
-                        }
-                        Ok(audio::AudioFrame::Beat { seq, t_ms, confidence }) => {
-                            let payload = serde_json::json!({
-                                "seq": seq,
-                                "t_ms": t_ms,
-                                "confidence": confidence,
-                            });
-                            let _ = app_handle.emit("audio-beat", payload);
                         }
                         Ok(audio::AudioFrame::Silence { seq, t_ms, silent }) => {
                             let payload = serde_json::json!({
@@ -235,7 +219,6 @@ fn main() {
             commands::set_launch_minimized,
             commands::list_audio_devices,
             commands::set_audio_device,
-            commands::set_beat_sensitivity,
             commands::set_viz_settings,
             commands::get_viz_settings,
             commands::set_viz_preset,
