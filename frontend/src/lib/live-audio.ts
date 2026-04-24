@@ -10,7 +10,7 @@
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect } from "react";
-import type { FftEvent, LevelEvent } from "./tauri";
+import type { BeatEvent, FftEvent, LevelEvent } from "./tauri";
 
 export function useLiveFft(
   bandsRef: React.MutableRefObject<number[] | null>,
@@ -39,4 +39,25 @@ export function useLiveFft(
       }
     };
   }, [bandsRef, levelRef]);
+}
+
+/**
+ * Subscribe to beat events. Calls the handler on every detected beat with
+ * `{ t_ms, confidence }`. Fire-and-forget — consumers that need to animate
+ * on beats should set a ref or trigger a CSS state change from the
+ * handler rather than schlep full state through React on each hit.
+ */
+export function useLiveBeat(onBeat: (evt: BeatEvent) => void) {
+  useEffect(() => {
+    const unlisten = listen<BeatEvent>("audio-beat", (evt) => {
+      onBeat(evt.payload);
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+    // Consumers should wrap onBeat in useCallback if they care about
+    // reference stability. Re-listening on every render would blow up
+    // the event system; depend on a stable callback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 }

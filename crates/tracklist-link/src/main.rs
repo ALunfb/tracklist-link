@@ -72,8 +72,11 @@ fn main() {
             // Audio capture pushes into a broadcast channel; the WS server
             // subscribes and fans out to each connected overlay.
             let (bus_tx, _) = tokio::sync::broadcast::channel::<audio::AudioFrame>(64);
-            let sample_rate = cfg.lock().unwrap().sample_rate;
-            audio::spawn_capture(sample_rate, bus_tx.clone())?;
+            let (sample_rate, device_name) = {
+                let g = cfg.lock().unwrap();
+                (g.sample_rate, g.audio_device_name.clone())
+            };
+            audio::spawn_capture(device_name, sample_rate, bus_tx.clone())?;
 
             // WS server on its own tokio runtime so the UI's async work
             // doesn't share a scheduler with audio fan-out.
@@ -116,6 +119,14 @@ fn main() {
                                 "peak": peak,
                             });
                             let _ = app_handle.emit("audio-level", payload);
+                        }
+                        Ok(audio::AudioFrame::Beat { seq, t_ms, confidence }) => {
+                            let payload = serde_json::json!({
+                                "seq": seq,
+                                "t_ms": t_ms,
+                                "confidence": confidence,
+                            });
+                            let _ = app_handle.emit("audio-beat", payload);
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                             // UI fell behind — drop frames, keep going.
@@ -176,6 +187,8 @@ fn main() {
             commands::get_autostart,
             commands::set_autostart,
             commands::set_launch_minimized,
+            commands::list_audio_devices,
+            commands::set_audio_device,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tracklist Link");

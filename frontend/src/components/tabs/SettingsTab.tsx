@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   FolderOpen,
+  Info,
+  Mic2,
   Power,
   RefreshCw,
   ShieldCheck,
@@ -10,10 +12,13 @@ import {
 import {
   getAutostart,
   getConfig,
+  listAudioDevices,
   openConfigFolder,
   regenerateToken,
+  setAudioDevice,
   setAutostart,
   setLaunchMinimized,
+  type AudioDeviceInfo,
   type ConfigView,
 } from "../../lib/tauri";
 import { cn } from "../../lib/cn";
@@ -32,13 +37,31 @@ export function SettingsTab() {
   const [autostartOn, setAutostartOn] = useState<boolean | null>(null);
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [launchMinBusy, setLaunchMinBusy] = useState(false);
+  const [devices, setDevices] = useState<AudioDeviceInfo[] | null>(null);
+  const [deviceBusy, setDeviceBusy] = useState(false);
+  const [devicePendingRestart, setDevicePendingRestart] = useState(false);
 
   useEffect(() => {
     void getConfig().then(setConfig);
     void getAutostart()
       .then(setAutostartOn)
       .catch(() => setAutostartOn(false));
+    void listAudioDevices()
+      .then(setDevices)
+      .catch(() => setDevices([]));
   }, []);
+
+  const chooseDevice = async (name: string | null) => {
+    if (!config) return;
+    setDeviceBusy(true);
+    try {
+      await setAudioDevice(name);
+      setConfig({ ...config, audio_device_name: name });
+      setDevicePendingRestart(true);
+    } finally {
+      setDeviceBusy(false);
+    }
+  };
 
   const toggleAutostart = async () => {
     if (autostartOn === null) return;
@@ -133,6 +156,47 @@ export function SettingsTab() {
             onClick={toggleLaunchMinimized}
           />
         </div>
+      </section>
+
+      {/* Audio device — pick which cpal output to capture from. Change
+          applies on next restart since hot-swap isn't wired yet. */}
+      <section className="glass-panel p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Mic2 className="h-4 w-4 text-accent" />
+          <div>
+            <div className="text-sm font-medium text-slate-100">
+              Audio capture device
+            </div>
+            <p className="mt-0.5 text-[11px] text-slate-500 leading-relaxed">
+              Which output device the companion loops back from. Default
+              follows your current Windows output. Change applies on
+              restart.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            value={config?.audio_device_name ?? ""}
+            onChange={(e) => void chooseDevice(e.target.value || null)}
+            disabled={deviceBusy || !devices}
+            className="flex-1 rounded-md border border-surface-border bg-base-800 px-3 py-2 text-sm text-slate-100 outline-none focus:border-accent disabled:opacity-60"
+          >
+            <option value="">System default</option>
+            {devices?.map((d) => (
+              <option key={d.name} value={d.name}>
+                {d.name}
+                {d.is_default ? " (system default)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+        {devicePendingRestart ? (
+          <div className="mt-3 inline-flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-amber-300/90 leading-relaxed">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            Saved. Quit the app from the tray and relaunch for the new
+            device to take effect.
+          </div>
+        ) : null}
       </section>
 
       <section className="glass-panel divide-y divide-surface-border">

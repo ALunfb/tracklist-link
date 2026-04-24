@@ -8,7 +8,7 @@
 //! quantum (commonly 480 or 960 samples at 48kHz). We downmix to mono and
 //! push into a ring buffer; the FFT task reads fixed-size windows from it.
 
-use super::{fft, AudioFrame};
+use super::{beat, fft, AudioFrame};
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
@@ -23,15 +23,20 @@ const HOP_SIZE: usize = 1024;
 
 /// Spawn the capture thread + FFT processor. Returns the stream handle so
 /// the caller can keep it alive for the life of the program.
+///
+/// `device_name` — cpal device name to capture from, or None for the
+/// system default. Devices are matched by exact name string; if the
+/// named device has vanished (unplugged since last config save), we fall
+/// back to default rather than failing startup.
 pub fn spawn_capture(
+    device_name: Option<String>,
     sample_rate: u32,
     bus: broadcast::Sender<AudioFrame>,
 ) -> Result<()> {
     let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .context("no default output device")?;
-    info!(device = ?device.name(), "opening default output device for loopback");
+    let device = resolve_output_device(&host, device_name.as_deref())
+        .context("no output device available")?;
+    info!(device = ?device.name(), "opening output device for loopback");
 
     // We want to capture what plays, at the requested rate if possible.
     let supported = device
@@ -105,6 +110,7 @@ fn fft_loop(
 ) {
     let mut seq: u64 = 0;
     let mut scratch = vec![0.0f32; WINDOW_SIZE];
+    let mut beat_detector = beat::BeatDetector::new();
     loop {
         // Block lightly while waiting for enough samples.
         {
@@ -129,6 +135,11 @@ fn fft_loop(
         let (bands64, rms, peak) = processor.process(&scratch);
         seq += 1;
 
+        // Beat detection runs on the same bands the FFT emits so the
+        // timestamps line up for cross-topic correlation (e.g. a consumer
+        // that wants "was the last beat within 100ms of this round_win?").
+        let beat_hit = beat_detector.push(&bands64, t_ms);
+
         // Best-effort broadcast — a slow client gets dropped frames, which
         // is fine. The seq counter lets them detect drops client-side.
         let _ = bus.send(AudioFrame::Fft64 {
@@ -137,6 +148,13 @@ fn fft_loop(
             bands: bands64,
         });
         let _ = bus.send(AudioFrame::Level { seq, t_ms, rms, peak });
+        if let Some(hit) = beat_hit {
+            let _ = bus.send(AudioFrame::Beat {
+                seq: hit.seq,
+                t_ms: hit.t_ms,
+                confidence: hit.confidence,
+            });
+        }
     }
 }
 
@@ -180,6 +198,51 @@ impl Ring {
         }
         self.read = self.read.saturating_add(hop);
     }
+}
+
+/// Find the cpal output device matching `preferred_name`, or fall back
+/// to the system default. Fallback is deliberate — a device can vanish
+/// between runs (USB unplug, Bluetooth disconnect), and the user would
+/// rather have audio from "something" than a hard startup failure.
+fn resolve_output_device(
+    host: &cpal::Host,
+    preferred_name: Option<&str>,
+) -> Option<cpal::Device> {
+    if let Some(name) = preferred_name {
+        if let Ok(devices) = host.output_devices() {
+            for d in devices {
+                if d.name().ok().as_deref() == Some(name) {
+                    return Some(d);
+                }
+            }
+        }
+        tracing::warn!(
+            preferred = name,
+            "preferred audio device not found; falling back to default"
+        );
+    }
+    host.default_output_device()
+}
+
+/// Enumerate every cpal output device we can capture from. Used by the
+/// Settings tab dropdown. Shapes as (name, is_current_default).
+pub fn list_output_devices() -> Vec<(String, bool)> {
+    let host = cpal::default_host();
+    let default_name = host
+        .default_output_device()
+        .and_then(|d| d.name().ok());
+    let Ok(devices) = host.output_devices() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for d in devices {
+        if let Ok(name) = d.name() {
+            let is_default = default_name.as_deref() == Some(name.as_str());
+            out.push((name, is_default));
+        }
+    }
+    out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    out
 }
 
 /// Thin trait so we can share the capture body across sample formats.

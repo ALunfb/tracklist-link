@@ -19,6 +19,12 @@ export interface ConfigView {
   allowed_origins: string[];
   sample_rate: number;
   launch_minimized: boolean;
+  audio_device_name: string | null;
+}
+
+export interface AudioDeviceInfo {
+  name: string;
+  is_default: boolean;
 }
 
 export const getStatus = () => invoke<StatusView>("get_status");
@@ -49,6 +55,11 @@ export const setAutostart = (enabled: boolean) =>
 export const setLaunchMinimized = (enabled: boolean) =>
   invoke<void>("set_launch_minimized", { enabled });
 
+export const listAudioDevices = () =>
+  invoke<AudioDeviceInfo[]>("list_audio_devices");
+export const setAudioDevice = (name: string | null) =>
+  invoke<void>("set_audio_device", { name });
+
 export interface FftEvent {
   seq: number;
   t_ms: number;
@@ -60,4 +71,10 @@ export interface LevelEvent {
   t_ms: number;
   rms: number;
   peak: number;
+}
+
+export interface BeatEvent {
+  seq: number;
+  t_ms: number;
+  confidence: number;
 }

@@ -31,6 +31,13 @@ pub struct ConfigView {
     pub allowed_origins: Vec<String>,
     pub sample_rate: u32,
     pub launch_minimized: bool,
+    pub audio_device_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct AudioDeviceInfo {
+    pub name: String,
+    pub is_default: bool,
 }
 
 #[tauri::command]
@@ -53,7 +60,32 @@ pub fn get_config(state: tauri::State<'_, AppState>) -> ConfigView {
         allowed_origins: cfg.allowed_origins.clone(),
         sample_rate: cfg.sample_rate,
         launch_minimized: cfg.launch_minimized,
+        audio_device_name: cfg.audio_device_name.clone(),
     }
+}
+
+/// Enumerate cpal output devices we can capture from. Called by the
+/// Settings tab dropdown. Change applies on next app restart since the
+/// capture thread doesn't yet support hot-swapping the device mid-flight.
+#[tauri::command]
+pub fn list_audio_devices() -> Vec<AudioDeviceInfo> {
+    crate::audio::capture::list_output_devices()
+        .into_iter()
+        .map(|(name, is_default)| AudioDeviceInfo { name, is_default })
+        .collect()
+}
+
+/// Save the preferred audio device name to config. `None` resets to the
+/// system default. Takes effect on next app start.
+#[tauri::command]
+pub fn set_audio_device(
+    state: tauri::State<'_, AppState>,
+    name: Option<String>,
+) -> Result<(), String> {
+    let mut cfg = state.cfg.lock().unwrap();
+    cfg.audio_device_name = name;
+    cfg.save().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

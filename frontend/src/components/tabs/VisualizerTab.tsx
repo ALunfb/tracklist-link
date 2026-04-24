@@ -15,7 +15,8 @@ import {
 } from "lucide-react";
 import butterchurn from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
-import { useLiveFft } from "../../lib/live-audio";
+import { useCallback } from "react";
+import { useLiveBeat, useLiveFft } from "../../lib/live-audio";
 import { listPresets, openPresetsFolder, readPreset } from "../../lib/tauri";
 import {
   loadVizSettings,
@@ -109,6 +110,23 @@ export function VisualizerTab() {
   const [query, setQuery] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showTune, setShowTune] = useState(false);
+  const [beatCount, setBeatCount] = useState(0);
+
+  // Restart the CSS animation on each beat by removing + re-adding the
+  // class in a forced-reflow dance. Purely visual; Butterchurn itself
+  // already renders reactive — this is a companion-scope confirmation
+  // that beat detection is flowing, and a seed for future CS2-GSI
+  // effects that'll trigger the same class.
+  const onBeat = useCallback(() => {
+    const el = containerRef.current;
+    if (el) {
+      el.classList.remove("beat-flash");
+      void el.offsetWidth; // force reflow
+      el.classList.add("beat-flash");
+    }
+    setBeatCount((n) => n + 1);
+  }, []);
+  useLiveBeat(onBeat);
 
   // Tuning: live-editable audio + transport settings persisted to
   // localStorage. The sampleAudio override reads from settingsRef every
@@ -447,6 +465,15 @@ export function VisualizerTab() {
                   {userPresetCount} installed
                 </span>
                 {" (◯)"}
+              </>
+            ) : null}
+            {beatCount > 0 ? (
+              <>
+                {" · "}
+                <span className="font-mono tabular-nums text-accent">
+                  {beatCount.toLocaleString()}
+                </span>{" "}
+                beats
               </>
             ) : null}
             {" · driven by your live audio"}

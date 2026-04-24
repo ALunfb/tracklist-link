@@ -38,6 +38,13 @@ pub struct Config {
     /// when configured to autostart on login.
     #[serde(default)]
     pub launch_minimized: bool,
+    /// Preferred audio output device to capture (cpal device name). When
+    /// None we use the system default. Change requires app restart —
+    /// hot-swapping mid-capture would need a capture-lifecycle refactor
+    /// beyond the scope of the settings pass. Settings UI makes this
+    /// explicit with a "applies on restart" hint.
+    #[serde(default)]
+    pub audio_device_name: Option<String>,
 }
 
 impl Config {
@@ -84,6 +91,7 @@ impl Config {
             ],
             sample_rate: 48_000,
             launch_minimized: false,
+            audio_device_name: None,
         }
     }
 
