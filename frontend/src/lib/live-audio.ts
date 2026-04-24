@@ -10,7 +10,12 @@
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect } from "react";
-import type { BeatEvent, FftEvent, LevelEvent } from "./tauri";
+import type {
+  BeatEvent,
+  FftEvent,
+  LevelEvent,
+  SilenceEvent,
+} from "./tauri";
 
 export function useLiveFft(
   bandsRef: React.MutableRefObject<number[] | null>,
@@ -58,6 +63,24 @@ export function useLiveBeat(onBeat: (evt: BeatEvent) => void) {
     // Consumers should wrap onBeat in useCallback if they care about
     // reference stability. Re-listening on every render would blow up
     // the event system; depend on a stable callback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}
+
+/**
+ * Subscribe to silence state-change events (audio/silence). Edge-
+ * triggered — the handler fires ONLY when silence begins or ends, not
+ * per-frame. Consumers that need "currently silent?" state should
+ * track the boolean themselves.
+ */
+export function useLiveSilence(onSilence: (evt: SilenceEvent) => void) {
+  useEffect(() => {
+    const unlisten = listen<SilenceEvent>("audio-silence", (evt) => {
+      onSilence(evt.payload);
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }

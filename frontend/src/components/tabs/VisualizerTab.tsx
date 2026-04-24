@@ -21,7 +21,7 @@ import { ObsClient } from "../../lib/obs-websocket";
 import { loadObsSettings, saveObsSettings, type ObsWsSettings } from "../../lib/obs-storage";
 import butterchurn from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
-import { useLiveBeat, useLiveFft } from "../../lib/live-audio";
+import { useLiveBeat, useLiveFft, useLiveSilence } from "../../lib/live-audio";
 import {
   getConfig,
   listPresets,
@@ -124,6 +124,7 @@ export function VisualizerTab() {
   const [showTune, setShowTune] = useState(false);
   const [showObsModal, setShowObsModal] = useState(false);
   const [bpm, setBpm] = useState<number | null>(null);
+  const [silent, setSilent] = useState(false);
   const [beatSensitivity, setBeatSensitivityState] = useState<number | null>(null);
 
   // Beat envelope ref — a decaying 0..1 "how recent was a beat" value
@@ -151,6 +152,18 @@ export function VisualizerTab() {
     setBpm(bpmEstimatorRef.current.estimate());
   }, []);
   useLiveBeat(onBeat);
+
+  const onSilence = useCallback((evt: { silent: boolean }) => {
+    setSilent(evt.silent);
+    if (evt.silent) {
+      // When silence starts, the BPM estimate goes stale fast — zero
+      // it immediately instead of showing a dangling 128 until the
+      // 12 s stale window kicks in.
+      bpmEstimatorRef.current = new BpmEstimator();
+      setBpm(null);
+    }
+  }, []);
+  useLiveSilence(onSilence);
 
   // Periodically re-estimate BPM even without new beats — lets stale
   // detections age out to null, so the header shows "—" instead of a
@@ -525,7 +538,16 @@ export function VisualizerTab() {
             <span className="font-mono tabular-nums text-accent">
               {bpm !== null ? `${bpm} BPM` : "— BPM"}
             </span>
-            {" · driven by your live audio"}
+            {silent ? (
+              <>
+                {" · "}
+                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-widest text-amber-300">
+                  Silent
+                </span>
+              </>
+            ) : (
+              " · driven by your live audio"
+            )}
           </p>
           {userLoadError ? (
             <p className="mt-1 text-[11px] text-rose-400">

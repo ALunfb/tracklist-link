@@ -81,3 +81,9 @@ export interface BeatEvent {
   t_ms: number;
   confidence: number;
 }
+
+export interface SilenceEvent {
+  seq: number;
+  t_ms: number;
+  silent: boolean;
+}
