@@ -11,11 +11,11 @@ import {
   Monitor,
   Pause,
   Play,
-  Search,
   Shuffle,
   SlidersHorizontal,
-  X,
 } from "lucide-react";
+import { PresetPicker } from "../PresetPicker";
+import { initPresetCatalog } from "../../lib/preset-catalog";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { ObsClient } from "../../lib/obs-websocket";
 import { loadObsSettings, saveObsSettings, type ObsWsSettings } from "../../lib/obs-storage";
@@ -119,7 +119,6 @@ export function VisualizerTab() {
   const [playing, setPlaying] = useState(true);
   const [autoCycle, setAutoCycle] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const [query, setQuery] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showTune, setShowTune] = useState(false);
   const [showObsModal, setShowObsModal] = useState(false);
@@ -149,19 +148,13 @@ export function VisualizerTab() {
   // analyser buffer size is the first time we see it.
   const bandEnvRef = useRef<Float32Array>(new Float32Array(0));
 
-  // Filtered preset list driven by the search box. Case-insensitive; we
-  // keep a parallel array of *original* indices so selecting a filtered
-  // result still maps to the true preset in presetMap. Filter runs on
-  // every keystroke — cheap, array is ~50 entries.
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) {
-      return presetNames.map((name, idx) => ({ name, idx }));
-    }
-    return presetNames
-      .map((name, idx) => ({ name, idx }))
-      .filter(({ name }) => name.toLowerCase().includes(q));
-  }, [query, presetNames]);
+  // Bootstrap the preset catalog (slug + thumbnail lookup) on mount.
+  // Cached in localStorage with stale-while-revalidate semantics, so
+  // the picker has thumbnails available within a few hundred ms of
+  // first launch and instantly thereafter.
+  useEffect(() => {
+    initPresetCatalog();
+  }, []);
 
   // Mount / create the visualizer once. Re-uses the same AudioContext +
   // canvas through the lifetime of the tab so presets can cross-fade.
@@ -653,45 +646,11 @@ export function VisualizerTab() {
             )}
           </button>
           <div className="ml-2 flex-1 min-w-0">
-            <select
-              value={presetIndex}
-              onChange={(e) => setPresetIndex(Number(e.target.value))}
-              className="w-full rounded-md border border-surface-border bg-base-800 px-2 py-2 text-sm text-slate-100 font-medium focus:border-accent focus:outline-none"
-            >
-              {filtered.map(({ name, idx }) => (
-                <option key={name} value={idx}>
-                  {name}
-                </option>
-              ))}
-              {filtered.length === 0 ? (
-                <option disabled>No matches</option>
-              ) : null}
-            </select>
-          </div>
-        </div>
-        {/* Search filter — shows under the transport so the user can
-            narrow the dropdown without losing focus context. */}
-        <div className="mt-2 flex items-center gap-2">
-          <div className="flex flex-1 items-center gap-2 rounded-md border border-surface-border bg-base-800 px-2">
-            <Search className="h-3.5 w-3.5 text-slate-500" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter presets…"
-              className="flex-1 bg-transparent py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none"
+            <PresetPicker
+              names={presetNames}
+              selectedIndex={presetIndex}
+              onSelect={setPresetIndex}
             />
-            {query ? (
-              <button
-                onClick={() => setQuery("")}
-                className="text-slate-500 hover:text-slate-300"
-                title="Clear"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            ) : null}
-          </div>
-          <div className="text-[11px] text-slate-500 tabular-nums">
-            {filtered.length}/{presetNames.length}
           </div>
         </div>
       </div>
