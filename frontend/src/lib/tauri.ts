@@ -84,6 +84,55 @@ export const setVizSettings = (settings: VizSettingsPayload) =>
 export const setVizPreset = (name: string) =>
   invoke<void>("set_viz_preset", { name });
 
+// --- Preset collections -----------------------------------------------------
+// Streamer-curated subsets of the bundled + user preset catalog. Stored
+// as preset-collections.json in the app config dir so it survives app
+// updates and can be hand-edited if a streamer wants to share a list.
+
+export interface PresetCollection {
+  id: string;
+  name: string;
+  /**
+   * Names match what butterchurnPresets.getPresets() returns — the
+   * bundled-pack key for catalog presets, or the same with a "◯ "
+   * prefix for user-installed ones. The picker uses these directly.
+   */
+  preset_names: string[];
+}
+
+export interface CollectionsView {
+  collections: PresetCollection[];
+  /** Currently-active collection id; null means "show all presets". */
+  active_collection_id: string | null;
+}
+
+export const listPresetCollections = () =>
+  invoke<CollectionsView>("list_preset_collections");
+
+export const createPresetCollection = (name: string) =>
+  invoke<CollectionsView>("create_preset_collection", { name });
+
+export const renamePresetCollection = (id: string, name: string) =>
+  invoke<CollectionsView>("rename_preset_collection", { id, name });
+
+export const deletePresetCollection = (id: string) =>
+  invoke<CollectionsView>("delete_preset_collection", { id });
+
+export const addToPresetCollection = (id: string, presetName: string) =>
+  invoke<CollectionsView>("add_to_preset_collection", {
+    id,
+    presetName,
+  });
+
+export const removeFromPresetCollection = (id: string, presetName: string) =>
+  invoke<CollectionsView>("remove_from_preset_collection", {
+    id,
+    presetName,
+  });
+
+export const setActivePresetCollection = (id: string | null) =>
+  invoke<CollectionsView>("set_active_preset_collection", { id });
+
 export interface FftEvent {
   seq: number;
   t_ms: number;

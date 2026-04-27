@@ -6,8 +6,9 @@
 
 use crate::audio::AudioFrame;
 use crate::config::Config;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::broadcast;
@@ -415,4 +416,213 @@ fn url_fragment_encode(s: &str) -> String {
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Preset collections — streamer-curated subsets of the bundled + user
+// preset catalog. Stored as a single JSON file in the config dir so it
+// survives app updates + can be diffed manually if a streamer wants to
+// share a collection. Single-user / single-machine for v1; the file
+// format is forward-compatible if cross-device sync ever lands.
+// ---------------------------------------------------------------------------
+
+/// One curated collection. `preset_names` are exactly the keys the
+/// frontend uses — the bundled-pack key (e.g. "_Aderrasi - X") for
+/// catalog presets, or the same with a "◯ " prefix for user-installed
+/// ones. Storing the name (not a hash) keeps the file readable + lets
+/// streamers hand-edit collections.json if they want.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresetCollection {
+    pub id: String,
+    pub name: String,
+    pub preset_names: Vec<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct CollectionsFile {
+    /// File-format version. Bump when the schema changes; old files
+    /// missing this field default to 1 via #[serde(default)].
+    #[serde(default = "default_collections_version")]
+    version: u32,
+    #[serde(default)]
+    collections: Vec<PresetCollection>,
+    /// Currently-active collection id; null means "show all presets".
+    #[serde(default)]
+    active_collection_id: Option<String>,
+}
+
+fn default_collections_version() -> u32 {
+    1
+}
+
+fn collections_file_path() -> Result<std::path::PathBuf, String> {
+    let dir = crate::config::config_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("preset-collections.json"))
+}
+
+fn load_collections_file() -> Result<CollectionsFile, String> {
+    let path = collections_file_path()?;
+    if !path.exists() {
+        return Ok(CollectionsFile::default());
+    }
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("read collections file: {e}"))?;
+    serde_json::from_str(&raw).map_err(|e| format!("parse collections file: {e}"))
+}
+
+fn save_collections_file(file: &CollectionsFile) -> Result<(), String> {
+    let path = collections_file_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create config dir: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(file)
+        .map_err(|e| format!("serialize collections: {e}"))?;
+    std::fs::write(&path, json).map_err(|e| format!("write collections file: {e}"))
+}
+
+/// Generate a short-ish unique id for a new collection. Timestamp-based
+/// to keep dependencies minimal — no `uuid` crate needed for a local
+/// single-user file. Collisions are effectively impossible at human
+/// click-rate.
+fn new_collection_id() -> String {
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("c{ms}")
+}
+
+/// Serializable view returned to the frontend after every mutating
+/// command. Including `active_collection_id` saves a second IPC round-
+/// trip when the picker needs to refresh both lists at once.
+#[derive(Debug, Serialize)]
+pub struct CollectionsView {
+    pub collections: Vec<PresetCollection>,
+    pub active_collection_id: Option<String>,
+}
+
+impl From<CollectionsFile> for CollectionsView {
+    fn from(f: CollectionsFile) -> Self {
+        Self {
+            collections: f.collections,
+            active_collection_id: f.active_collection_id,
+        }
+    }
+}
+
+#[tauri::command]
+pub fn list_preset_collections() -> Result<CollectionsView, String> {
+    Ok(load_collections_file()?.into())
+}
+
+#[tauri::command]
+pub fn create_preset_collection(name: String) -> Result<CollectionsView, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("name cannot be empty".to_string());
+    }
+    if trimmed.len() > 64 {
+        return Err("name too long (max 64 chars)".to_string());
+    }
+    let mut file = load_collections_file()?;
+    file.collections.push(PresetCollection {
+        id: new_collection_id(),
+        name: trimmed.to_string(),
+        preset_names: Vec::new(),
+    });
+    save_collections_file(&file)?;
+    Ok(file.into())
+}
+
+#[tauri::command]
+pub fn rename_preset_collection(
+    id: String,
+    name: String,
+) -> Result<CollectionsView, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("name cannot be empty".to_string());
+    }
+    if trimmed.len() > 64 {
+        return Err("name too long (max 64 chars)".to_string());
+    }
+    let mut file = load_collections_file()?;
+    let target = file
+        .collections
+        .iter_mut()
+        .find(|c| c.id == id)
+        .ok_or_else(|| format!("collection {id} not found"))?;
+    target.name = trimmed.to_string();
+    save_collections_file(&file)?;
+    Ok(file.into())
+}
+
+#[tauri::command]
+pub fn delete_preset_collection(id: String) -> Result<CollectionsView, String> {
+    let mut file = load_collections_file()?;
+    let before = file.collections.len();
+    file.collections.retain(|c| c.id != id);
+    if file.collections.len() == before {
+        return Err(format!("collection {id} not found"));
+    }
+    if file.active_collection_id.as_deref() == Some(id.as_str()) {
+        file.active_collection_id = None;
+    }
+    save_collections_file(&file)?;
+    Ok(file.into())
+}
+
+#[tauri::command]
+pub fn add_to_preset_collection(
+    id: String,
+    preset_name: String,
+) -> Result<CollectionsView, String> {
+    let mut file = load_collections_file()?;
+    let target = file
+        .collections
+        .iter_mut()
+        .find(|c| c.id == id)
+        .ok_or_else(|| format!("collection {id} not found"))?;
+    if !target.preset_names.iter().any(|n| n == &preset_name) {
+        target.preset_names.push(preset_name);
+    }
+    save_collections_file(&file)?;
+    Ok(file.into())
+}
+
+#[tauri::command]
+pub fn remove_from_preset_collection(
+    id: String,
+    preset_name: String,
+) -> Result<CollectionsView, String> {
+    let mut file = load_collections_file()?;
+    let target = file
+        .collections
+        .iter_mut()
+        .find(|c| c.id == id)
+        .ok_or_else(|| format!("collection {id} not found"))?;
+    let before = target.preset_names.len();
+    target.preset_names.retain(|n| n != &preset_name);
+    if target.preset_names.len() == before {
+        // Not strictly an error — idempotent remove. Just log silently
+        // by saving anyway so the file's mtime is current.
+    }
+    save_collections_file(&file)?;
+    Ok(file.into())
+}
+
+#[tauri::command]
+pub fn set_active_preset_collection(
+    id: Option<String>,
+) -> Result<CollectionsView, String> {
+    let mut file = load_collections_file()?;
+    if let Some(ref id_val) = id {
+        if !file.collections.iter().any(|c| &c.id == id_val) {
+            return Err(format!("collection {id_val} not found"));
+        }
+    }
+    file.active_collection_id = id;
+    save_collections_file(&file)?;
+    Ok(file.into())
 }

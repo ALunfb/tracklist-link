@@ -222,6 +222,13 @@ fn main() {
             commands::set_viz_settings,
             commands::get_viz_settings,
             commands::set_viz_preset,
+            commands::list_preset_collections,
+            commands::create_preset_collection,
+            commands::rename_preset_collection,
+            commands::delete_preset_collection,
+            commands::add_to_preset_collection,
+            commands::remove_from_preset_collection,
+            commands::set_active_preset_collection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tracklist Link");
