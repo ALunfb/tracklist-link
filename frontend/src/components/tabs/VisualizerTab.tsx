@@ -21,23 +21,28 @@ import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { ObsClient } from "../../lib/obs-websocket";
 import { loadObsSettings, saveObsSettings, type ObsWsSettings } from "../../lib/obs-storage";
 import butterchurn from "butterchurn";
-import butterchurnPresets from "butterchurn-presets";
-// The npm package ships its 1738-preset Cream of the Crop catalog as
-// FIVE separate bundles to keep individual chunk sizes manageable.
-// Loading just the default `butterchurn-presets` import gives you ~100
-// base presets — the rest live in these sub-bundles, which we merge
-// below. The web app reads the raw `presets/converted/*.json` files
-// from node_modules directly (catalog generator, build-time), which
-// is why the gallery has all 1738 while the in-app picker historically
-// only showed ~100. Now they match.
-// @ts-expect-error - no types for the legacy minified sub-bundle paths
-import butterchurnPresetsExtra from "butterchurn-presets/lib/butterchurnPresetsExtra.min.js";
-// @ts-expect-error - same as above
-import butterchurnPresetsExtra2 from "butterchurn-presets/lib/butterchurnPresetsExtra2.min.js";
-// @ts-expect-error - same as above
-import butterchurnPresetsMinimal from "butterchurn-presets/lib/butterchurnPresetsMinimal.min.js";
-// @ts-expect-error - same as above
-import butterchurnPresetsNonMinimal from "butterchurn-presets/lib/butterchurnPresetsNonMinimal.min.js";
+// The npm package's pre-built JS bundles only cover ~367 of the 1738
+// presets — they're a hand-picked curated subset for browser apps
+// that don't want to ship the whole catalog. The full set lives as
+// raw .json files under butterchurn-presets/presets/converted/, which
+// the web app reads directly via its build-time catalog generator.
+//
+// To match the web app's catalog inside this Tauri app, we use Vite's
+// import.meta.glob with eager+default to suck in all 1754 raw preset
+// JSONs at build time. They get rolled into the final bundle, ~2-3 MB
+// gzipped. Acceptable cost for a desktop app served from disk; the
+// alternative is shipping the converted/ folder as a sidecar resource
+// + reading it via Tauri at runtime, which adds complexity for no
+// real benefit at this scale.
+//
+// The path is relative from this source file:
+//   frontend/src/components/tabs/VisualizerTab.tsx
+//     -> ../../../ = frontend/
+//     -> node_modules/butterchurn-presets/presets/converted/*.json
+const RAW_PRESET_MODULES = import.meta.glob<unknown>(
+  "../../../node_modules/butterchurn-presets/presets/converted/*.json",
+  { eager: true, import: "default" },
+);
 import { useLiveFft, useLiveSilence } from "../../lib/live-audio";
 import {
   getConfig,
@@ -78,23 +83,20 @@ export function VisualizerTab() {
   const bandsRef = useRef<number[] | null>(null);
   useLiveFft(bandsRef);
 
-  // Bundled presets from the butterchurn-presets npm package. The pack
-  // is split across five sub-bundles; merging them yields the full
-  // Cream of the Crop catalog (1738 presets at v2.4.7), matching the
-  // web app's catalog.json + the R2 thumbnail set so the in-app
-  // picker now has parity with the gallery.
-  //
-  // Spread order is base -> extra -> extra2 -> minimal -> nonMinimal.
-  // If keys overlap between bundles, last-write-wins; in practice the
-  // bundles are disjoint splits so the merge is just a union.
+  // Build the bundled-preset map from RAW_PRESET_MODULES once. Each
+  // entry's key is the filename (without .json), matching the web
+  // app's catalog `originalFilename` minus the extension — this is the
+  // key shape the rest of the picker + catalog lookup expects, so
+  // R2 thumbnail URLs resolve cleanly with no name-mapping layer.
   const bundledMap = useMemo(() => {
-    return {
-      ...(butterchurnPresets.getPresets() as Record<string, unknown>),
-      ...(butterchurnPresetsExtra.getPresets() as Record<string, unknown>),
-      ...(butterchurnPresetsExtra2.getPresets() as Record<string, unknown>),
-      ...(butterchurnPresetsMinimal.getPresets() as Record<string, unknown>),
-      ...(butterchurnPresetsNonMinimal.getPresets() as Record<string, unknown>),
-    };
+    const out: Record<string, unknown> = {};
+    for (const [path, preset] of Object.entries(RAW_PRESET_MODULES)) {
+      const filename = path.split("/").pop();
+      if (!filename) continue;
+      const key = filename.replace(/\.json$/i, "");
+      out[key] = preset;
+    }
+    return out;
   }, []);
 
   // User presets — .json files the streamer installed via the gallery

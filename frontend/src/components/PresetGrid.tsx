@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X, Star, Plus, Trash2 } from "lucide-react";
+import {
+  Search,
+  X,
+  Star,
+  Plus,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { cn } from "../lib/cn";
 import {
   getPresetEntry,
@@ -65,8 +73,11 @@ const REACTIVITY_LABELS: Record<ReactivityTag, string> = {
   vol: "Volume",
 };
 
-const INITIAL_VISIBLE = 60;
-const VISIBLE_PAGE_SIZE = 60;
+/** Tiles per page. With the 5-col desktop grid that's 12 rows — a
+ *  comfortable amount of vertical space without forcing the streamer
+ *  to scroll a wall of thumbnails. Adjust to taste; 30/40/60/80 all
+ *  work as long as it's a multiple of the column counts (2/3/4/5). */
+const PAGE_SIZE = 60;
 
 function parseAuthor(name: string): { author: string | null; title: string } {
   const cleaned = name
@@ -90,7 +101,9 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
   const [activeFilters, setActiveFilters] = useState<Set<ReactivityTag>>(
     new Set(),
   );
-  const [visibleLimit, setVisibleLimit] = useState(INITIAL_VISIBLE);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [pageJumpDraft, setPageJumpDraft] = useState("");
+  const [pageJumpFocused, setPageJumpFocused] = useState(false);
   const [creatingCollection, setCreatingCollection] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
   const newCollectionInputRef = useRef<HTMLInputElement | null>(null);
@@ -224,8 +237,12 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
     return out;
   }, [indexed, query, activeFilters, activeCollectionSet, viewMode]);
 
-  const visible = filtered.slice(0, visibleLimit);
-  const hasMore = filtered.length > visibleLimit;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // Clamp current page if filtering shrunk the result set below it.
+  const safePage = Math.min(currentPage, pageCount - 1);
+  const pageStart = safePage * PAGE_SIZE;
+  const pageEnd = Math.min(filtered.length, pageStart + PAGE_SIZE);
+  const visible = filtered.slice(pageStart, pageEnd);
 
   function toggleFilter(tag: ReactivityTag) {
     setActiveFilters((prev) => {
@@ -234,7 +251,20 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
       else next.add(tag);
       return next;
     });
-    setVisibleLimit(INITIAL_VISIBLE);
+    setCurrentPage(0);
+  }
+
+  function goToPage(n: number) {
+    const clamped = Math.max(0, Math.min(pageCount - 1, n));
+    setCurrentPage(clamped);
+    // Scroll the grid back to the top of itself when paging — without
+    // this, jumping to page 5 leaves the streamer scrolled deep on the
+    // previous page's content. Use scrollIntoView on a sentinel above
+    // the grid so the search bar stays in view above.
+    requestAnimationFrame(() => {
+      const el = document.getElementById("preset-grid-top");
+      if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
   }
 
   async function handleCreateCollection() {
@@ -263,11 +293,12 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
     }
   }, [creatingCollection]);
 
-  // Reset visible cap when any filter input changes — otherwise a
-  // streamer who scrolled deep, then narrowed, sees a half-empty
-  // result list before the "show more" button.
+  // Reset to the first page when any filter input changes — otherwise
+  // a streamer on page 12 of "all presets" who narrows by search
+  // would land on a 0-result page even though their query has plenty
+  // of matches.
   useEffect(() => {
-    setVisibleLimit(INITIAL_VISIBLE);
+    setCurrentPage(0);
   }, [query, activeCollectionId, viewMode]);
 
   return (
@@ -408,6 +439,8 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
         </span>
       </div>
 
+      <div id="preset-grid-top" />
+
       {/* The grid. Empty state coaches the streamer through the
           common "I just made a collection and it's empty" path. */}
       {visible.length === 0 ? (
@@ -464,15 +497,66 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
         </ul>
       )}
 
-      {hasMore ? (
-        <div className="flex justify-center">
-          <button
-            type="button"
-            onClick={() => setVisibleLimit((n) => n + VISIBLE_PAGE_SIZE)}
-            className="rounded-md border border-surface-border bg-surface px-3 py-1.5 text-xs text-slate-300 hover:bg-surface-hover hover:text-white"
-          >
-            Show {Math.min(VISIBLE_PAGE_SIZE, filtered.length - visibleLimit)} more
-          </button>
+      {filtered.length > PAGE_SIZE ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-surface-border/60 pt-3">
+          <div className="text-[11px] tabular-nums text-slate-500">
+            {pageStart + 1}&ndash;{pageEnd} of {filtered.length.toLocaleString()}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => goToPage(safePage - 1)}
+              disabled={safePage === 0}
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-surface-border bg-surface text-slate-300 transition-colors hover:bg-surface-hover hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-surface"
+              title="Previous page"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <div className="flex items-center gap-1 rounded-md border border-surface-border bg-surface px-2 py-0.5 text-xs">
+              <span className="text-slate-400">Page</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={
+                  pageJumpFocused
+                    ? pageJumpDraft
+                    : (safePage + 1).toString()
+                }
+                onFocus={() => {
+                  setPageJumpDraft((safePage + 1).toString());
+                  setPageJumpFocused(true);
+                }}
+                onChange={(e) =>
+                  setPageJumpDraft(e.target.value.replace(/[^0-9]/g, ""))
+                }
+                onBlur={() => {
+                  const n = parseInt(pageJumpDraft, 10);
+                  if (!Number.isNaN(n)) goToPage(n - 1);
+                  setPageJumpFocused(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    (e.currentTarget as HTMLInputElement).blur();
+                  }
+                  if (e.key === "Escape") {
+                    setPageJumpFocused(false);
+                    (e.currentTarget as HTMLInputElement).blur();
+                  }
+                }}
+                className="w-10 bg-transparent text-center font-mono tabular-nums text-slate-100 focus:outline-none"
+              />
+              <span className="text-slate-500">/&nbsp;{pageCount}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => goToPage(safePage + 1)}
+              disabled={safePage === pageCount - 1}
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-surface-border bg-surface text-slate-300 transition-colors hover:bg-surface-hover hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-surface"
+              title="Next page"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       ) : null}
     </div>
