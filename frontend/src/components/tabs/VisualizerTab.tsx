@@ -22,6 +22,22 @@ import { ObsClient } from "../../lib/obs-websocket";
 import { loadObsSettings, saveObsSettings, type ObsWsSettings } from "../../lib/obs-storage";
 import butterchurn from "butterchurn";
 import butterchurnPresets from "butterchurn-presets";
+// The npm package ships its 1738-preset Cream of the Crop catalog as
+// FIVE separate bundles to keep individual chunk sizes manageable.
+// Loading just the default `butterchurn-presets` import gives you ~100
+// base presets — the rest live in these sub-bundles, which we merge
+// below. The web app reads the raw `presets/converted/*.json` files
+// from node_modules directly (catalog generator, build-time), which
+// is why the gallery has all 1738 while the in-app picker historically
+// only showed ~100. Now they match.
+// @ts-expect-error - no types for the legacy minified sub-bundle paths
+import butterchurnPresetsExtra from "butterchurn-presets/lib/butterchurnPresetsExtra.min.js";
+// @ts-expect-error - same as above
+import butterchurnPresetsExtra2 from "butterchurn-presets/lib/butterchurnPresetsExtra2.min.js";
+// @ts-expect-error - same as above
+import butterchurnPresetsMinimal from "butterchurn-presets/lib/butterchurnPresetsMinimal.min.js";
+// @ts-expect-error - same as above
+import butterchurnPresetsNonMinimal from "butterchurn-presets/lib/butterchurnPresetsNonMinimal.min.js";
 import { useLiveFft, useLiveSilence } from "../../lib/live-audio";
 import {
   getConfig,
@@ -62,10 +78,23 @@ export function VisualizerTab() {
   const bandsRef = useRef<number[] | null>(null);
   useLiveFft(bandsRef);
 
-  // Bundled presets from the butterchurn-presets npm package. `getPresets()`
-  // returns an object keyed by display name; convert to a stable array.
+  // Bundled presets from the butterchurn-presets npm package. The pack
+  // is split across five sub-bundles; merging them yields the full
+  // Cream of the Crop catalog (1738 presets at v2.4.7), matching the
+  // web app's catalog.json + the R2 thumbnail set so the in-app
+  // picker now has parity with the gallery.
+  //
+  // Spread order is base -> extra -> extra2 -> minimal -> nonMinimal.
+  // If keys overlap between bundles, last-write-wins; in practice the
+  // bundles are disjoint splits so the merge is just a union.
   const bundledMap = useMemo(() => {
-    return butterchurnPresets.getPresets() as Record<string, unknown>;
+    return {
+      ...(butterchurnPresets.getPresets() as Record<string, unknown>),
+      ...(butterchurnPresetsExtra.getPresets() as Record<string, unknown>),
+      ...(butterchurnPresetsExtra2.getPresets() as Record<string, unknown>),
+      ...(butterchurnPresetsMinimal.getPresets() as Record<string, unknown>),
+      ...(butterchurnPresetsNonMinimal.getPresets() as Record<string, unknown>),
+    };
   }, []);
 
   // User presets — .json files the streamer installed via the gallery
