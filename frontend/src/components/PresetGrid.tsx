@@ -95,6 +95,14 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
   const [newCollectionName, setNewCollectionName] = useState("");
   const newCollectionInputRef = useRef<HTMLInputElement | null>(null);
 
+  // viewMode is purely local: "all" shows the entire catalog; "collection"
+  // scopes to the active collection. Critically separate from
+  // activeCollectionId (the persistent star target) — earlier UI
+  // conflated the two and produced a catch-22 where creating a
+  // collection scoped the grid to that (empty) collection, leaving
+  // nothing to star.
+  const [viewMode, setViewMode] = useState<"all" | "collection">("collection");
+
   const {
     collections,
     activeCollection,
@@ -105,6 +113,19 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
     deleteCollection,
     setActiveCollection,
   } = useCollections();
+
+  // When the picker first mounts and there's a saved active collection,
+  // default to viewing it (matches a streamer's expectation of "show me
+  // what I was working with last session"). When there's no saved
+  // active collection, default to viewing all.
+  useEffect(() => {
+    if (!activeCollectionId) {
+      setViewMode("all");
+    }
+    // Only run this on initial activeCollectionId resolution, not on
+    // every change — explicit user actions below set viewMode directly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Membership set for the active collection — pre-built so the
   // indexed loop below can do an O(1) check per preset rather than
@@ -137,8 +158,15 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
     const out: ScoredEntry[] = [];
 
     for (const entry of indexed) {
-      // Active-collection scope hard-filters before anything else.
-      if (activeCollectionSet && !activeCollectionSet.has(entry.name)) {
+      // Active-collection scope hard-filters BEFORE anything else, but
+      // ONLY when the streamer is viewing the collection. Viewing "All
+      // presets" with an active collection set keeps the full catalog
+      // visible while stars stay enabled for the active target.
+      if (
+        viewMode === "collection" &&
+        activeCollectionSet &&
+        !activeCollectionSet.has(entry.name)
+      ) {
         continue;
       }
 
@@ -194,7 +222,7 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
       return a.name.localeCompare(b.name);
     });
     return out;
-  }, [indexed, query, activeFilters, activeCollectionSet]);
+  }, [indexed, query, activeFilters, activeCollectionSet, viewMode]);
 
   const visible = filtered.slice(0, visibleLimit);
   const hasMore = filtered.length > visibleLimit;
@@ -218,6 +246,12 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
     const created = await createCollection(name);
     if (created) {
       await setActiveCollection(created.id);
+      // After creating a new (empty) collection, default the view to
+      // "all" so the streamer can immediately scan all 1738 presets
+      // and star into the new collection. Otherwise they'd land on an
+      // empty grid and have to manually switch — the catch-22 the user
+      // hit before this fix.
+      setViewMode("all");
     }
     setNewCollectionName("");
     setCreatingCollection(false);
@@ -234,38 +268,55 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
   // result list before the "show more" button.
   useEffect(() => {
     setVisibleLimit(INITIAL_VISIBLE);
-  }, [query, activeCollectionId]);
+  }, [query, activeCollectionId, viewMode]);
 
   return (
     <div className="space-y-3">
-      {/* Collection chip rail. "All" is always present + always first;
-          custom collections render in creation order; "+ New" lives
-          at the end (or transforms into an inline input when active). */}
+      {/* Collection chip rail. "All presets" is always first + present;
+          user collections render in creation order; "+ New" at the
+          end (or transforms into an inline input when active).
+
+          Two-axis state encoded in chip styling:
+          - viewMode === "all": "All presets" chip is highlighted
+          - viewMode === "collection" AND active matches: that chip
+            is highlighted
+          - When viewMode === "all" but activeCollectionId is set, the
+            active collection chip gets a subtle "★ target" badge so
+            the streamer knows where stars will go even though the grid
+            shows everything. */}
       <div className="flex flex-wrap items-center gap-1.5">
         <CollectionChip
           label="All presets"
           count={names.length}
-          active={!activeCollectionId}
-          onClick={() => void setActiveCollection(null)}
+          active={viewMode === "all"}
+          onClick={() => setViewMode("all")}
         />
-        {collections.map((c) => (
-          <CollectionChip
-            key={c.id}
-            label={c.name}
-            count={c.preset_names.length}
-            active={c.id === activeCollectionId}
-            onClick={() => void setActiveCollection(c.id)}
-            onDelete={() => {
-              if (
-                window.confirm(
-                  `Delete collection "${c.name}"? Presets stay in the catalog; only the curated list is removed.`,
-                )
-              ) {
-                void deleteCollection(c.id);
-              }
-            }}
-          />
-        ))}
+        {collections.map((c) => {
+          const isActiveTarget = c.id === activeCollectionId;
+          const isViewing = isActiveTarget && viewMode === "collection";
+          return (
+            <CollectionChip
+              key={c.id}
+              label={c.name}
+              count={c.preset_names.length}
+              active={isViewing}
+              isStarTarget={isActiveTarget && viewMode === "all"}
+              onClick={() => {
+                void setActiveCollection(c.id);
+                setViewMode("collection");
+              }}
+              onDelete={() => {
+                if (
+                  window.confirm(
+                    `Delete collection "${c.name}"? Presets stay in the catalog; only the curated list is removed.`,
+                  )
+                ) {
+                  void deleteCollection(c.id);
+                }
+              }}
+            />
+          );
+        })}
         {creatingCollection ? (
           <div className="flex items-center gap-1 rounded-full border border-accent/50 bg-accent/10 px-2 py-0.5">
             <input
@@ -361,9 +412,29 @@ export function PresetGrid({ names, selectedIndex, onSelect }: Props) {
           common "I just made a collection and it's empty" path. */}
       {visible.length === 0 ? (
         <div className="rounded-md border border-dashed border-surface-border bg-base-900/40 px-6 py-10 text-center text-sm text-slate-500">
-          {activeCollection && filtered.length === 0 && !query && activeFilters.size === 0
-            ? `"${activeCollection.name}" is empty. Switch to All presets, then ★ ones you want here.`
-            : "No presets match — try a different search or clear filters."}
+          {viewMode === "collection" &&
+          activeCollection &&
+          filtered.length === 0 &&
+          !query &&
+          activeFilters.size === 0 ? (
+            <>
+              <p className="mb-2 text-slate-400">
+                &ldquo;{activeCollection.name}&rdquo; is empty.
+              </p>
+              <p>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("all")}
+                  className="text-accent hover:underline"
+                >
+                  Switch to All presets
+                </button>
+                {" — stars on every tile go into this collection."}
+              </p>
+            </>
+          ) : (
+            "No presets match — try a different search or clear filters."
+          )}
         </div>
       ) : (
         <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
@@ -417,12 +488,16 @@ function CollectionChip({
   label,
   count,
   active,
+  isStarTarget,
   onClick,
   onDelete,
 }: {
   label: string;
   count: number;
   active: boolean;
+  /** When true, the chip isn't the current view but IS the active
+   *  star target — show a small star icon to communicate that. */
+  isStarTarget?: boolean;
   onClick: () => void;
   onDelete?: () => void;
 }) {
@@ -431,16 +506,26 @@ function CollectionChip({
       <button
         type="button"
         onClick={onClick}
+        title={
+          isStarTarget && !active
+            ? `Active star target — click to view "${label}"`
+            : undefined
+        }
         className={cn(
           "flex items-center gap-1.5 rounded-full border px-3 py-0.5 text-xs transition-colors",
           active
             ? "border-accent/50 bg-accent/15 text-accent"
-            : "border-surface-border bg-surface text-slate-300 hover:bg-surface-hover hover:text-white",
+            : isStarTarget
+              ? "border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/15"
+              : "border-surface-border bg-surface text-slate-300 hover:bg-surface-hover hover:text-white",
           onDelete && "pr-6",
         )}
       >
+        {isStarTarget && !active ? (
+          <Star className="h-3 w-3" fill="currentColor" strokeWidth={2} />
+        ) : null}
         <span className="font-medium">{label}</span>
-        <span className="tabular-nums text-slate-500">{count}</span>
+        <span className="tabular-nums opacity-70">{count}</span>
       </button>
       {onDelete ? (
         <button
