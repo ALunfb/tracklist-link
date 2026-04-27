@@ -14,13 +14,35 @@ import {
   Shuffle,
   SlidersHorizontal,
 } from "lucide-react";
-import { PresetPicker } from "../PresetPicker";
+import { PresetGrid } from "../PresetGrid";
+import { getPresetThumbnailUrl } from "../../lib/preset-catalog";
 import { initPresetCatalog } from "../../lib/preset-catalog";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { ObsClient } from "../../lib/obs-websocket";
 import { loadObsSettings, saveObsSettings, type ObsWsSettings } from "../../lib/obs-storage";
 import butterchurn from "butterchurn";
-import butterchurnPresets from "butterchurn-presets";
+// The npm package's pre-built JS bundles only cover ~367 of the 1738
+// presets — they're a hand-picked curated subset for browser apps
+// that don't want to ship the whole catalog. The full set lives as
+// raw .json files under butterchurn-presets/presets/converted/, which
+// the web app reads directly via its build-time catalog generator.
+//
+// To match the web app's catalog inside this Tauri app, we use Vite's
+// import.meta.glob with eager+default to suck in all 1754 raw preset
+// JSONs at build time. They get rolled into the final bundle, ~2-3 MB
+// gzipped. Acceptable cost for a desktop app served from disk; the
+// alternative is shipping the converted/ folder as a sidecar resource
+// + reading it via Tauri at runtime, which adds complexity for no
+// real benefit at this scale.
+//
+// The path is relative from this source file:
+//   frontend/src/components/tabs/VisualizerTab.tsx
+//     -> ../../../ = frontend/
+//     -> node_modules/butterchurn-presets/presets/converted/*.json
+const RAW_PRESET_MODULES = import.meta.glob<unknown>(
+  "../../../node_modules/butterchurn-presets/presets/converted/*.json",
+  { eager: true, import: "default" },
+);
 import { useLiveFft, useLiveSilence } from "../../lib/live-audio";
 import {
   getConfig,
@@ -61,10 +83,20 @@ export function VisualizerTab() {
   const bandsRef = useRef<number[] | null>(null);
   useLiveFft(bandsRef);
 
-  // Bundled presets from the butterchurn-presets npm package. `getPresets()`
-  // returns an object keyed by display name; convert to a stable array.
+  // Build the bundled-preset map from RAW_PRESET_MODULES once. Each
+  // entry's key is the filename (without .json), matching the web
+  // app's catalog `originalFilename` minus the extension — this is the
+  // key shape the rest of the picker + catalog lookup expects, so
+  // R2 thumbnail URLs resolve cleanly with no name-mapping layer.
   const bundledMap = useMemo(() => {
-    return butterchurnPresets.getPresets() as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [path, preset] of Object.entries(RAW_PRESET_MODULES)) {
+      const filename = path.split("/").pop();
+      if (!filename) continue;
+      const key = filename.replace(/\.json$/i, "");
+      out[key] = preset;
+    }
+    return out;
   }, []);
 
   // User presets — .json files the streamer installed via the gallery
@@ -645,15 +677,30 @@ export function VisualizerTab() {
               <Play className="h-4 w-4" />
             )}
           </button>
-          <div className="ml-2 flex-1 min-w-0">
-            <PresetPicker
-              names={presetNames}
-              selectedIndex={presetIndex}
-              onSelect={setPresetIndex}
-            />
+          {/* Compact "now playing" label — replaces the old dropdown
+              picker. Read-only display; the actual picking happens in
+              the tile grid below where streamers can scan thumbnails
+              and star into collections. */}
+          <div className="ml-2 flex min-w-0 flex-1 items-center gap-2 rounded-md border border-surface-border bg-base-800 px-2 py-1.5">
+            <NowPlayingThumb name={presetNames[presetIndex] ?? null} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-slate-100">
+                {presetNames[presetIndex] ?? "—"}
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Persistent preset grid below the transport. This is the actual
+          picker now — tiles with thumbnails, star to collections,
+          search/filter at the top. Streamers can scroll through it
+          while the canvas above keeps rendering the live preset. */}
+      <PresetGrid
+        names={presetNames}
+        selectedIndex={presetIndex}
+        onSelect={setPresetIndex}
+      />
 
       {showShortcuts ? <ShortcutsPanel onClose={() => setShowShortcuts(false)} /> : null}
       {showObsModal ? <ObsIntegrationModal onClose={() => setShowObsModal(false)} /> : null}
@@ -1096,5 +1143,33 @@ function Shortcut({ keys, action }: { keys: string[]; action: string }) {
         ))}
       </span>
     </div>
+  );
+}
+
+/**
+ * Tiny thumbnail next to the now-playing label in the transport row.
+ * Renders the catalog GIF when available; otherwise a placeholder.
+ * 24×14 — small enough to feel like a status badge, big enough to
+ * give a glance of the current visual when the streamer is focused
+ * on the canvas above the grid.
+ */
+function NowPlayingThumb({ name }: { name: string | null }) {
+  const url = name ? getPresetThumbnailUrl(name) : null;
+  if (!url) {
+    return (
+      <div
+        aria-hidden
+        className="h-[14px] w-[24px] shrink-0 rounded-sm border border-surface-border/60 bg-base-900"
+      />
+    );
+  }
+  return (
+    <img
+      src={url}
+      loading="lazy"
+      decoding="async"
+      alt=""
+      className="h-[14px] w-[24px] shrink-0 rounded-sm border border-surface-border/40 object-cover"
+    />
   );
 }
