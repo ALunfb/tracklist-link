@@ -14,7 +14,8 @@ import {
   Shuffle,
   SlidersHorizontal,
 } from "lucide-react";
-import { PresetPicker } from "../PresetPicker";
+import { PresetGrid } from "../PresetGrid";
+import { getPresetThumbnailUrl } from "../../lib/preset-catalog";
 import { initPresetCatalog } from "../../lib/preset-catalog";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { ObsClient } from "../../lib/obs-websocket";
@@ -645,15 +646,30 @@ export function VisualizerTab() {
               <Play className="h-4 w-4" />
             )}
           </button>
-          <div className="ml-2 flex-1 min-w-0">
-            <PresetPicker
-              names={presetNames}
-              selectedIndex={presetIndex}
-              onSelect={setPresetIndex}
-            />
+          {/* Compact "now playing" label — replaces the old dropdown
+              picker. Read-only display; the actual picking happens in
+              the tile grid below where streamers can scan thumbnails
+              and star into collections. */}
+          <div className="ml-2 flex min-w-0 flex-1 items-center gap-2 rounded-md border border-surface-border bg-base-800 px-2 py-1.5">
+            <NowPlayingThumb name={presetNames[presetIndex] ?? null} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-slate-100">
+                {presetNames[presetIndex] ?? "—"}
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Persistent preset grid below the transport. This is the actual
+          picker now — tiles with thumbnails, star to collections,
+          search/filter at the top. Streamers can scroll through it
+          while the canvas above keeps rendering the live preset. */}
+      <PresetGrid
+        names={presetNames}
+        selectedIndex={presetIndex}
+        onSelect={setPresetIndex}
+      />
 
       {showShortcuts ? <ShortcutsPanel onClose={() => setShowShortcuts(false)} /> : null}
       {showObsModal ? <ObsIntegrationModal onClose={() => setShowObsModal(false)} /> : null}
@@ -1096,5 +1112,33 @@ function Shortcut({ keys, action }: { keys: string[]; action: string }) {
         ))}
       </span>
     </div>
+  );
+}
+
+/**
+ * Tiny thumbnail next to the now-playing label in the transport row.
+ * Renders the catalog GIF when available; otherwise a placeholder.
+ * 24×14 — small enough to feel like a status badge, big enough to
+ * give a glance of the current visual when the streamer is focused
+ * on the canvas above the grid.
+ */
+function NowPlayingThumb({ name }: { name: string | null }) {
+  const url = name ? getPresetThumbnailUrl(name) : null;
+  if (!url) {
+    return (
+      <div
+        aria-hidden
+        className="h-[14px] w-[24px] shrink-0 rounded-sm border border-surface-border/60 bg-base-900"
+      />
+    );
+  }
+  return (
+    <img
+      src={url}
+      loading="lazy"
+      decoding="async"
+      alt=""
+      className="h-[14px] w-[24px] shrink-0 rounded-sm border border-surface-border/40 object-cover"
+    />
   );
 }
