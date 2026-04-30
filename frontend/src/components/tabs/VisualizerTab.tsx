@@ -217,9 +217,20 @@ export function VisualizerTab() {
     // cycle (e.g. toggling the Tune drawer) can catch clientWidth at 0
     // and butterchurn's internal render target gets stuck at 300×150.
     void canvas.getBoundingClientRect();
+    const initW = canvas.clientWidth || 1280;
+    const initH = canvas.clientHeight || 720;
+    // CRITICAL: butterchurn's setRendererSize updates the GL viewport
+    // but NOT canvas.width / canvas.height (the framebuffer
+    // attributes). Without our explicit set, the canvas framebuffer
+    // stays at the HTML default 300×150 and the WebGL viewport
+    // (potentially much larger after a resize) renders into a
+    // bottom-left chunk that's the only part visible. Manifests as a
+    // dramatic zoom-into-corner crop in fullscreen / on big monitors.
+    canvas.width = initW;
+    canvas.height = initH;
     const viz = butterchurn.createVisualizer(ctx, canvas, {
-      width: canvas.clientWidth || 1280,
-      height: canvas.clientHeight || 720,
+      width: initW,
+      height: initH,
       pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
     });
     vizRef.current = viz;
@@ -338,11 +349,16 @@ export function VisualizerTab() {
     void ctx.resume();
 
     // ResizeObserver → keep the canvas buffer matched to its layout size.
-    // Without this, preset render looks stretched when the window resizes.
+    // We sync canvas.width / canvas.height (the framebuffer) alongside
+    // butterchurn's GL viewport update — see the long comment at canvas
+    // creation. Without that sync, fullscreen on a wide monitor renders
+    // only the bottom-left chunk of the visualizer.
     const ro = new ResizeObserver(() => {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
       if (w > 0 && h > 0) {
+        if (canvas.width !== w) canvas.width = w;
+        if (canvas.height !== h) canvas.height = h;
         viz.setRendererSize(w, h);
       }
     });
