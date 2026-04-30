@@ -472,14 +472,22 @@ export function VisualizerTab() {
     }
   }, [presetIndex, presetMap, presetNames]);
 
-  // Auto-cycle — swap preset every N seconds when enabled, where N comes
-  // from the Tune panel. Depend on settings.autoCycleSeconds explicitly
-  // so slider changes re-arm the interval immediately.
+  // Auto-cycle — swap to a RANDOM preset every N seconds when enabled.
+  // Sequential walks felt like a slow march through the catalog
+  // alphabetically; shuffling exercises the streamer's whole pool.
+  // Picks any index except the current one so the cycle always
+  // visibly changes (no "auto-cycled to the same preset" no-ops).
+  // Distribution is uniform across the other presets.
   useEffect(() => {
     if (!autoCycle) return;
     const ms = Math.max(5, settings.autoCycleSeconds) * 1000;
     const id = window.setInterval(() => {
-      setPresetIndex((i) => (i + 1) % presetNames.length);
+      setPresetIndex((current) => {
+        if (presetNames.length <= 1) return current;
+        // Pick from 0..length-2, then skip past `current` to avoid it.
+        const candidate = Math.floor(Math.random() * (presetNames.length - 1));
+        return candidate >= current ? candidate + 1 : candidate;
+      });
     }, ms);
     return () => window.clearInterval(id);
   }, [autoCycle, presetNames.length, settings.autoCycleSeconds]);
