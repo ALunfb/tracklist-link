@@ -11,20 +11,30 @@ pub mod ws;
 use crate::audio::AudioFrame;
 use crate::config::Config;
 use anyhow::Result;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 use tracklist_link_proto::{VizPreset, VizSettings};
 
+/// Run the WebSocket server.
+///
+/// `cfg` is shared with the Tauri commands (`AppState.cfg`) — we hold an
+/// `Arc<Mutex<Config>>` here so that token regeneration via the UI takes
+/// effect for *new* connections without restarting the app. Earlier
+/// versions cloned the config out at startup, which left the WS auth
+/// validating against a stale token after every regen.
 pub async fn run(
-    cfg: Config,
+    cfg: Arc<Mutex<Config>>,
     bus: broadcast::Sender<AudioFrame>,
     viz_settings: Arc<RwLock<VizSettings>>,
     viz_preset: Arc<RwLock<VizPreset>>,
 ) -> Result<()> {
-    let addr = cfg.bind_addr();
-    let cfg = Arc::new(cfg);
+    // Bind address (port) is read once at startup. Port changes still
+    // require a restart — they'd require rebinding the listener which
+    // is a bigger ceremony. Token + origin allowlist are read per
+    // handshake (see ws::handle).
+    let addr = cfg.lock().expect("config mutex poisoned").bind_addr();
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "ws server listening");
 

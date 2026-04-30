@@ -84,6 +84,20 @@ export const setVizSettings = (settings: VizSettingsPayload) =>
 export const setVizPreset = (name: string) =>
   invoke<void>("set_viz_preset", { name });
 
+/** Read the currently-active preset name from the shared Rust state.
+ *  VisualizerTab calls this on mount so the displayed preset survives
+ *  tab navigation — without it, the local React `presetIndex` state
+ *  resets to 0 every time the tab unmounts. */
+export const getVizPreset = () =>
+  invoke<{ name: string }>("get_viz_preset");
+
+/** Build the full OBS Browser Source URL with the current token + port.
+ *  Used by the "Copy OBS URL" button so streamers never have to manually
+ *  concat a token into a URL. The token is URL-safe base64, no further
+ *  encoding needed. */
+export const companionObsUrl = () =>
+  invoke<string>("companion_obs_url");
+
 // --- Preset collections -----------------------------------------------------
 // Streamer-curated subsets of the bundled + user preset catalog. Stored
 // as preset-collections.json in the app config dir so it survives app

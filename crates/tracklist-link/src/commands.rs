@@ -126,6 +126,36 @@ pub fn set_viz_preset(
     Ok(())
 }
 
+/// Read the currently-active preset name from the shared state. Used by
+/// the VisualizerTab on mount to restore the user's selection after they
+/// navigate away and back. Without this, the tab's local React state
+/// resets `presetIndex` to 0 on every remount.
+#[tauri::command]
+pub fn get_viz_preset(state: tauri::State<'_, AppState>) -> VizPreset {
+    state.viz_preset.read().unwrap().clone()
+}
+
+/// Build the full OBS Browser Source URL with the streamer's current
+/// token + port baked in. The "Copy OBS URL" button in the UI invokes
+/// this and writes the result to the system clipboard, eliminating the
+/// manual concat-the-token step that's easy to fat-finger.
+///
+/// Re-reads the live config so the URL always reflects the most recent
+/// regenerated token. The streamer pastes this exact string into OBS as
+/// a Browser Source URL — no further editing needed.
+///
+/// The token is `base64::URL_SAFE_NO_PAD` (see `fresh_token` in
+/// config.rs) so we don't need any additional URL encoding — it's
+/// already safe to drop straight into a query string.
+#[tauri::command]
+pub fn companion_obs_url(state: tauri::State<'_, AppState>) -> String {
+    let cfg = state.cfg.lock().unwrap();
+    format!(
+        "https://music.blackpearl.gg/visualizer?token={}&port={}",
+        cfg.token, cfg.port,
+    )
+}
+
 /// Enumerate cpal output devices we can capture from. Called by the
 /// Settings tab dropdown. Change applies on next app restart since the
 /// capture thread doesn't yet support hot-swapping the device mid-flight.
