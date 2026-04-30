@@ -682,20 +682,27 @@ export function VisualizerTab() {
                 : "aspect-video",
           )}
         >
-          {/* Canvas locked to 16:9 with CSS, centered on black. The
-              wrapping flex container letterbox / pillarboxes cleanly in
-              non-16:9 shapes (Tune drawer open, fullscreen on 21:9
-              monitor, etc.) rather than stretching the preset. Actual
-              render resolution still tracks canvas.clientWidth × DPR
-              via the ResizeObserver below, so quality never softens. */}
+          {/* Canvas behavior depends on mode:
+                - In-panel: 16:9 with maxWidth/maxHeight, letterboxed
+                  cleanly inside the tab layout. Tab controls + Tune
+                  drawer expect a predictable shape.
+                - Fullscreen: fills the screen natively at whatever
+                  aspect the display is. No forced 16:9, no letterbox.
+                  This matches the web /visualizer (always native) and
+                  the OBS Browser Source (always native), so the three
+                  surfaces visually agree. */}
           <canvas
             ref={canvasRef}
-            style={{
-              display: "block",
-              aspectRatio: "16 / 9",
-              maxWidth: "100%",
-              maxHeight: "100%",
-            }}
+            style={
+              fullscreen
+                ? { display: "block", width: "100vw", height: "100vh" }
+                : {
+                    display: "block",
+                    aspectRatio: "16 / 9",
+                    maxWidth: "100%",
+                    maxHeight: "100%",
+                  }
+            }
           />
           {/* Fullscreen toggle floats over the canvas, top-right. */}
           <button
