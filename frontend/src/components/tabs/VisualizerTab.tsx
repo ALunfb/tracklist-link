@@ -51,6 +51,8 @@ import {
   readPreset,
   setVizSettings as setVizSettingsCmd,
   setVizPreset as setVizPresetCmd,
+  getVizPreset,
+  companionObsUrl,
 } from "../../lib/tauri";
 import {
   loadVizSettings,
@@ -147,7 +149,17 @@ export function VisualizerTab() {
   );
   const userPresetCount = Object.keys(userPresetMap).length;
 
+  // presetIndex restoration:
+  //   1. On mount, query Rust state via getVizPreset() — that's the
+  //      source of truth (set by every loadPreset). If it's non-empty
+  //      and matches a known preset, use it.
+  //   2. Otherwise fall back to localStorage (in case the user
+  //      cold-launches the app — Rust state starts empty).
+  //   3. Otherwise default to 0 (alphabetical first preset).
+  // On every change, write to localStorage so the cold-launch fallback
+  // is always recent.
   const [presetIndex, setPresetIndex] = useState(0);
+  const [presetIndexRestored, setPresetIndexRestored] = useState(false);
   const [playing, setPlaying] = useState(true);
   const [autoCycle, setAutoCycle] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -155,6 +167,8 @@ export function VisualizerTab() {
   const [showTune, setShowTune] = useState(false);
   const [showObsModal, setShowObsModal] = useState(false);
   const [silent, setSilent] = useState(false);
+  // Copy-OBS-URL button state.
+  const [obsUrlCopied, setObsUrlCopied] = useState(false);
 
   const onSilence = useCallback((evt: { silent: boolean }) => {
     setSilent(evt.silent);
@@ -368,6 +382,60 @@ export function VisualizerTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Restore the last-active preset on mount. AppState.viz_preset (Rust)
+  // is the source of truth: it's set by every set_viz_preset call so it
+  // survives tab unmount/remount. localStorage is the fallback for cold
+  // launches when the Rust state is still empty. Without this, every
+  // navigate-away-and-back resets to alphabetical-index-0.
+  //
+  // Runs once after `presetNames` is populated (which happens after the
+  // bundled + user catalogs load).
+  useEffect(() => {
+    if (presetIndexRestored) return;
+    if (presetNames.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      let restoreName: string | null = null;
+      try {
+        const fromRust = await getVizPreset();
+        if (fromRust.name) restoreName = fromRust.name;
+      } catch {
+        // Tauri command failed — use localStorage fallback.
+      }
+      if (!restoreName) {
+        try {
+          restoreName = localStorage.getItem("vizPresetName");
+        } catch {
+          restoreName = null;
+        }
+      }
+      if (cancelled) return;
+      if (restoreName) {
+        const idx = presetNames.indexOf(restoreName);
+        if (idx >= 0) {
+          setPresetIndex(idx);
+        }
+      }
+      setPresetIndexRestored(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [presetNames, presetIndexRestored]);
+
+  // Persist the current preset name to localStorage on every change so
+  // a cold-launched app picks up where the user left off (Rust state
+  // starts empty after restart).
+  useEffect(() => {
+    const name = presetNames[presetIndex];
+    if (!name) return;
+    try {
+      localStorage.setItem("vizPresetName", name);
+    } catch {
+      // Quota / privacy mode — non-fatal.
+    }
+  }, [presetIndex, presetNames]);
+
   // Load selected preset whenever the index changes.
   useEffect(() => {
     const viz = vizRef.current;
@@ -524,6 +592,28 @@ export function VisualizerTab() {
           ) : null}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={async () => {
+              try {
+                const url = await companionObsUrl();
+                await navigator.clipboard.writeText(url);
+                setObsUrlCopied(true);
+                setTimeout(() => setObsUrlCopied(false), 2500);
+              } catch {
+                // Clipboard or Tauri command failed — silent. The
+                // "Add to OBS" modal is the fallback.
+              }
+            }}
+            className="inline-flex items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs text-accent hover:bg-accent/20"
+            title="Copy the Browser Source URL with current token to clipboard. Paste into OBS as a Browser Source URL."
+          >
+            {obsUrlCopied ? (
+              <Check className="h-3.5 w-3.5" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
+            {obsUrlCopied ? "Copied!" : "Copy OBS URL"}
+          </button>
           <button
             onClick={() => setShowObsModal(true)}
             className="inline-flex items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs text-accent hover:bg-accent/20"

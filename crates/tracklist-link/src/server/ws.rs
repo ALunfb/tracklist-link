@@ -15,7 +15,7 @@ use crate::config::Config;
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
@@ -27,9 +27,16 @@ use tracklist_link_proto::{
     Topic, VizPreset, VizSettings, PROTOCOL_VERSION,
 };
 
+/// Per-connection WebSocket handler.
+///
+/// `cfg` is the shared `Arc<Mutex<Config>>` — we lock it inside the
+/// handshake callback to validate Host / Origin / token against the
+/// CURRENT config rather than a startup snapshot. This means a token
+/// regeneration via the UI takes effect on the very next connection,
+/// no app restart needed.
 pub async fn handle(
     stream: TcpStream,
-    cfg: Arc<Config>,
+    cfg: Arc<Mutex<Config>>,
     bus: broadcast::Sender<AudioFrame>,
     viz_settings: Arc<RwLock<VizSettings>>,
     viz_preset: Arc<RwLock<VizPreset>>,
@@ -37,7 +44,7 @@ pub async fn handle(
     // We need to validate headers BEFORE the WS upgrade completes, and
     // tungstenite's `accept_hdr_async` callback lets us do exactly that:
     // return a non-101 response to short-circuit.
-    let cfg_hdrs = cfg.clone();
+    let cfg_for_handshake = cfg.clone();
     let token_check_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let flag = token_check_failed.clone();
 
@@ -53,15 +60,24 @@ pub async fn handle(
                 .and_then(|v| v.to_str().ok());
             let token = extract_token(req.uri().query());
 
-            if !origin::check_host(cfg_hdrs.port, host) {
+            // Lock the live config for the duration of validation. The
+            // closure is synchronous (no .await), so std::sync::Mutex is
+            // safe — no risk of blocking the executor across await points.
+            // Reading the live config means a regenerated token authorizes
+            // the very next connection, no companion restart required.
+            let cfg_locked = cfg_for_handshake
+                .lock()
+                .expect("config mutex poisoned");
+
+            if !origin::check_host(cfg_locked.port, host) {
                 flag.store(true, std::sync::atomic::Ordering::SeqCst);
                 return Err(http_err(http::StatusCode::FORBIDDEN, "bad host"));
             }
-            if !origin::check_origin(&cfg_hdrs.allowed_origins, origin) {
+            if !origin::check_origin(&cfg_locked.allowed_origins, origin) {
                 flag.store(true, std::sync::atomic::Ordering::SeqCst);
                 return Err(http_err(http::StatusCode::FORBIDDEN, "origin not allowed"));
             }
-            if !auth::check_token(&cfg_hdrs.token, token.as_deref()) {
+            if !auth::check_token(&cfg_locked.token, token.as_deref()) {
                 flag.store(true, std::sync::atomic::Ordering::SeqCst);
                 return Err(http_err(http::StatusCode::UNAUTHORIZED, "bad token"));
             }
@@ -80,11 +96,16 @@ pub async fn handle(
 
     let (mut tx, mut rx) = ws_stream.split();
 
+    // Read sample_rate from the live config. Doesn't change at runtime,
+    // but we may as well honor whatever's in the config rather than a
+    // stale snapshot.
+    let sample_rate = cfg.lock().expect("config mutex poisoned").sample_rate;
+
     // Send Hello immediately so the client can verify protocol version.
     let hello = serde_json::to_string(&ServerMessage::Hello {
         v: PROTOCOL_VERSION,
         app_version: env!("CARGO_PKG_VERSION").into(),
-        sample_rate: cfg.sample_rate,
+        sample_rate,
     })?;
     tx.send(Message::Text(hello)).await?;
 

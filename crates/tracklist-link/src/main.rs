@@ -92,6 +92,14 @@ fn main() {
 
             // WS server on its own tokio runtime so the UI's async work
             // doesn't share a scheduler with audio fan-out.
+            //
+            // The server gets the SAME `Arc<Mutex<Config>>` that the
+            // Tauri commands hold (via AppState.cfg) — not a clone of
+            // the inner Config. This way, when the user clicks
+            // "Regenerate token", the server's auth check picks up the
+            // new value on the next handshake. Earlier versions cloned
+            // the snapshot here at startup which left auth permanently
+            // pinned to the launch-time token.
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()?;
@@ -101,8 +109,7 @@ fn main() {
             let server_preset = viz_preset.clone();
             std::thread::spawn(move || {
                 let _ = rt.block_on(async move {
-                    let snapshot = server_cfg.lock().unwrap().clone();
-                    server::run(snapshot, server_bus, server_viz, server_preset).await
+                    server::run(server_cfg, server_bus, server_viz, server_preset).await
                 });
             });
 
@@ -222,6 +229,8 @@ fn main() {
             commands::set_viz_settings,
             commands::get_viz_settings,
             commands::set_viz_preset,
+            commands::get_viz_preset,
+            commands::companion_obs_url,
             commands::list_preset_collections,
             commands::create_preset_collection,
             commands::rename_preset_collection,
